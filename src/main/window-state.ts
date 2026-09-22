@@ -183,6 +183,32 @@ export function fitToDisplays(rect: Rect, displays: DisplayWorkArea[], primaryId
   return centerIn(rect, primary.workArea);
 }
 
+/** `getBounds()` minus the rect passed to `setBounds`. Subtract this from later reads. */
+export function boundsEcho(live: Rect, applied: Rect): Rect {
+  return {
+    x: live.x - applied.x,
+    y: live.y - applied.y,
+    width: live.width - applied.width,
+    height: live.height - applied.height,
+  };
+}
+
+/** DIP rect the user asked for, after removing the window manager's getBounds offset. */
+export function userRect(live: Rect, echo: Rect): Rect {
+  return {x: live.x - echo.x, y: live.y - echo.y, width: live.width - echo.width, height: live.height - echo.height};
+}
+
+/** A move updates position only. Width and height stay on the stored rect. */
+export function rememberMove(stored: Rect, live: Rect, echo: Rect): Rect {
+  const corrected = userRect(live, echo);
+  return {x: corrected.x, y: corrected.y, width: stored.width, height: stored.height};
+}
+
+/** A resize replaces the full rect, still with the echo removed. */
+export function rememberResize(live: Rect, echo: Rect): Rect {
+  return userRect(live, echo);
+}
+
 /** Store the live bounds under the current mode, then switch. The other mode's rect is left as it was. */
 export function switchMode(state: SavedWindowState, next: WindowMode, currentBounds: Rect): SavedWindowState {
   return {

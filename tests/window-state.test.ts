@@ -7,8 +7,10 @@ import {
   defaultWindowState,
   fitToDisplays,
   loadWindowState,
+  rememberMove,
   saveWindowState,
   switchMode,
+  userRect,
   type DisplayWorkArea,
   type Rect,
   type SavedWindowState,
@@ -141,6 +143,25 @@ test('the display with the wider title-bar overlap wins', () => {
   const narrowLeft: DisplayWorkArea = {id: 4, workArea: {x: 0, y: 0, width: 1000, height: 800}, scaleFactor: 1};
   const rect = {x: 900, y: 0, width: 1500, height: 200};
   assert.deepEqual(fitToDisplays(rect, [narrowLeft, right], narrowLeft.id), {x: 900, y: 0, width: 1000, height: 200});
+});
+
+test('move-only cycles keep the stored size when getBounds carries a constant echo', () => {
+  const echo = {x: 2, y: 4, width: 6, height: 6};
+  let stored = {x: 776, y: 559, width: 400, height: 132};
+  for (let cycle = 0; cycle < 4; cycle += 1) {
+    const movedTo = {x: 140 + cycle * 40, y: 230 + cycle * 30};
+    const live = {
+      x: movedTo.x + echo.x,
+      y: movedTo.y + echo.y,
+      width: stored.width + echo.width,
+      height: stored.height + echo.height,
+    };
+    stored = rememberMove(stored, live, echo);
+    assert.equal(stored.width, 400, `cycle ${cycle + 1} width`);
+    assert.equal(stored.height, 132, `cycle ${cycle + 1} height`);
+    assert.deepEqual(userRect(live, echo), {...movedTo, width: 400, height: 132});
+  }
+  assert.deepEqual(stored, {x: 260, y: 320, width: 400, height: 132});
 });
 
 test('mode switch stores the live bounds without overwriting the other mode', () => {

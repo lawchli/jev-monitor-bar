@@ -29,7 +29,7 @@ export function detectPlatform(
       // Linux Wayland：未实机验证
       return {os: 'linux-wayland', arch, tier: 3, alwaysOnTopSupported: false, notes: [WAYLAND_NOTE]};
     }
-    // Linux X11：已在 Linux VM 验证（2026-09-22）
+    // Linux X11：置顶与不抢焦点已在 Linux VM 验证（2026-09-22）。位置恢复不在这句里记为已验证。
     return {os: 'linux-x11', arch, tier: 2, alwaysOnTopSupported: true, notes: []};
   }
   // 其他平台：未实机验证
@@ -51,7 +51,7 @@ export function platformProfile(info: PlatformInfo): WindowBehavior {
   if (info.os === 'macos') return behavior(true);
   // Windows：未实机验证
   if (info.os === 'windows') return behavior(false);
-  // Linux X11：已在 Linux VM 验证（2026-09-22）。置顶用 floating，不跨工作区。
+  // Linux X11：置顶与不抢焦点已在 Linux VM 验证（2026-09-22）。不跨工作区。
   if (info.os === 'linux-x11') return behavior(false);
   // Linux Wayland：未实机验证。仍按置顶调用，限制说明在 detectPlatform 的 notes 里。
   if (info.os === 'linux-wayland') return behavior(false);

@@ -38,7 +38,9 @@ export class EventStore extends EventEmitter {
   }
   ingest(raw:unknown){
     validateEvent(raw);
-    if(this.ids.has(raw.event_id)||this.sequences.has(this.seq(raw)))return {accepted:false,cursor:this.cursor};
+    if(this.ids.has(raw.event_id))return {accepted:false,cursor:this.cursor};
+    // A new event_id on a used producer sequence usually means a restarted sender reused its producer_id.
+    if(this.sequences.has(this.seq(raw)))return {accepted:false,conflict:true,cursor:this.cursor};
     const e:StoredEvent={...sanitizeEvent(raw,this.diagnostics),received_at:new Date().toISOString(),cursor:this.cursor+1};
     const line=JSON.stringify(e)+'\n';const size=Buffer.byteLength(line);
     if(this.segmentBytes+size>this.segmentLimit){this.segment++;this.segmentBytes=0;}

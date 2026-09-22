@@ -18,7 +18,7 @@ export async function startServer(store:EventStore,sessionFile:string,port=0){
     try{
       for await(const chunk of req){size+=chunk.length;if(size>65536){respond(413,{error:'64 KiB event limit'});req.resume();return;}chunks.push(chunk);}
       let value:unknown;try{value=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{respond(400,{error:'Invalid JSON'});return;}
-      try{respond(200,store.ingest(value));}catch(e){respond((e as NodeJS.ErrnoException).code?503:400,{error:(e as NodeJS.ErrnoException).code?'Storage unavailable':'Invalid protocol event'});}
+      try{const result=store.ingest(value);respond('conflict' in result?409:200,result);}catch(e){respond((e as NodeJS.ErrnoException).code?503:400,{error:(e as NodeJS.ErrnoException).code?'Storage unavailable':'Invalid protocol event'});}
     }catch{if(!res.headersSent)respond(400,{error:'Incomplete request'});}
   });
   server.requestTimeout=2000;server.headersTimeout=3000;server.maxConnections=32;

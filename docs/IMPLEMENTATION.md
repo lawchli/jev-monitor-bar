@@ -80,3 +80,17 @@
 - 内容：按仓库所有者要求，model 字段只记厂商和模型系列、不写版本号（如 `claude-opus`、`gpt-sol`、`gpt-terra`）。更新 `AGENTS.md`、prompt、README 与实施记录模板。04 中的 `claude-opus-5.5` 按新规则应为 `claude-opus`，旧记录保留不改写。
 - 验证：纯文档改动；`pnpm typecheck` 与 `pnpm test` 仍通过。
 - 遗留：同 03。
+
+## P1-03 — 协议制品：JSON Schema、协议文档与模拟场景
+
+- 日期：2026-09-22
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：
+  - `scripts/export-schema.ts` 与 `pnpm schema:export`：把 `src/protocol.ts` 的 `schema` 写成 `protocol/event.schema.json`（`JSON.stringify(schema, null, 2)` 加换行）。
+  - `docs/PROTOCOL.md`：按当前接收、存储、状态聚合和脱敏代码写协议说明。数据目录只列需求里的默认位置，并写明路径解析尚未实现。
+  - `fixtures/scenarios/`：7 个模拟场景（normal、dispersed、rule-override、retry、verify-failed、reconnect、concurrent），每个文件一条 run。
+  - `tests/protocol-artifacts.test.ts`：schema 文件与代码一致；每个场景逐行 `validateEvent` 后写入新的 `EventStore`，状态与 `index.json` 的 `expect` 一致。
+- 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm schema:export`、`pnpm typecheck`、`pnpm test` 通过，12 项测试全部通过。Windows / macOS 未在本机执行，交给 CI。未做桌面窗口验证。
+- 遗留：演示播放属于 P1-08；README 里的协议文档链接留给 P1-10。`verify-failed` 不发送 run 终态，run 状态停在 `verification_failed`。`pause_after_index` 从 0 起算，不暂停的场景为 `null`；`reconnect` 的 `pause_ms` 为 35000。P1-00 尚未合并，新的 TypeScript 按计划中的 Prettier 选项排过版，没有改既有文件的格式，也没有把 Prettier 加进依赖。

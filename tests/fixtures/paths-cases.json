@@ -1,0 +1,199 @@
+[
+  {
+    "name": "win32 with LOCALAPPDATA",
+    "platform": "win32",
+    "env": {"LOCALAPPDATA": "C:\\Users\\me\\AppData\\Local"},
+    "homedir": "C:\\Users\\me",
+    "expected": {
+      "home": "C:\\Users\\me\\AppData\\Local\\jev-monitor-bar",
+      "sessionFile": "C:\\Users\\me\\AppData\\Local\\jev-monitor-bar\\session.json"
+    }
+  },
+  {
+    "name": "win32 without LOCALAPPDATA",
+    "platform": "win32",
+    "env": {},
+    "homedir": "C:\\Users\\me",
+    "expected": {
+      "home": "C:\\Users\\me\\AppData\\Local\\jev-monitor-bar",
+      "sessionFile": "C:\\Users\\me\\AppData\\Local\\jev-monitor-bar\\session.json"
+    }
+  },
+  {
+    "name": "win32 empty LOCALAPPDATA",
+    "platform": "win32",
+    "env": {"LOCALAPPDATA": ""},
+    "homedir": "C:\\Users\\me",
+    "expected": {
+      "home": "C:\\Users\\me\\AppData\\Local\\jev-monitor-bar",
+      "sessionFile": "C:\\Users\\me\\AppData\\Local\\jev-monitor-bar\\session.json"
+    }
+  },
+  {
+    "name": "darwin",
+    "platform": "darwin",
+    "env": {},
+    "homedir": "/Users/me",
+    "expected": {
+      "home": "/Users/me/Library/Application Support/jev-monitor-bar",
+      "sessionFile": "/Users/me/Library/Application Support/jev-monitor-bar/session.json"
+    }
+  },
+  {
+    "name": "linux with absolute XDG_STATE_HOME",
+    "platform": "linux",
+    "env": {"XDG_STATE_HOME": "/var/state"},
+    "homedir": "/home/me",
+    "expected": {
+      "home": "/var/state/jev-monitor-bar",
+      "sessionFile": "/var/state/jev-monitor-bar/session.json"
+    }
+  },
+  {
+    "name": "linux without XDG_STATE_HOME",
+    "platform": "linux",
+    "env": {},
+    "homedir": "/home/me",
+    "expected": {
+      "home": "/home/me/.local/state/jev-monitor-bar",
+      "sessionFile": "/home/me/.local/state/jev-monitor-bar/session.json"
+    }
+  },
+  {
+    "name": "linux relative XDG_STATE_HOME ignored",
+    "platform": "linux",
+    "env": {"XDG_STATE_HOME": "relative/state"},
+    "homedir": "/home/me",
+    "cwd": "/home/me",
+    "expected": {
+      "home": "/home/me/.local/state/jev-monitor-bar",
+      "sessionFile": "/home/me/.local/state/jev-monitor-bar/session.json"
+    }
+  },
+  {
+    "name": "linux empty XDG_STATE_HOME",
+    "platform": "linux",
+    "env": {"XDG_STATE_HOME": ""},
+    "homedir": "/home/me",
+    "expected": {
+      "home": "/home/me/.local/state/jev-monitor-bar",
+      "sessionFile": "/home/me/.local/state/jev-monitor-bar/session.json"
+    }
+  },
+  {
+    "name": "linux XDG_STATE_HOME trailing slash",
+    "platform": "linux",
+    "env": {"XDG_STATE_HOME": "/var/state/"},
+    "homedir": "/home/me",
+    "expected": {
+      "home": "/var/state/jev-monitor-bar",
+      "sessionFile": "/var/state/jev-monitor-bar/session.json"
+    }
+  },
+  {
+    "name": "JEV_MONITOR_HOME absolute override",
+    "platform": "linux",
+    "env": {"JEV_MONITOR_HOME": "/opt/custom", "XDG_STATE_HOME": "/var/state"},
+    "homedir": "/home/me",
+    "expected": {
+      "home": "/opt/custom",
+      "sessionFile": "/opt/custom/session.json"
+    }
+  },
+  {
+    "name": "JEV_MONITOR_HOME relative to cwd",
+    "platform": "linux",
+    "env": {"JEV_MONITOR_HOME": "rel/home"},
+    "homedir": "/home/me",
+    "cwd": "/work/project",
+    "expected": {
+      "home": "/work/project/rel/home",
+      "sessionFile": "/work/project/rel/home/session.json"
+    }
+  },
+  {
+    "name": "empty JEV_MONITOR_HOME falls through",
+    "platform": "darwin",
+    "env": {"JEV_MONITOR_HOME": ""},
+    "homedir": "/Users/me",
+    "expected": {
+      "home": "/Users/me/Library/Application Support/jev-monitor-bar",
+      "sessionFile": "/Users/me/Library/Application Support/jev-monitor-bar/session.json"
+    }
+  },
+  {
+    "name": "JEV_MONITOR_HOME trailing slash is normalized",
+    "platform": "linux",
+    "env": {"JEV_MONITOR_HOME": "/opt/custom/"},
+    "homedir": "/home/me",
+    "expected": {
+      "home": "/opt/custom",
+      "sessionFile": "/opt/custom/session.json"
+    }
+  },
+  {
+    "name": "JEV_MONITOR_SESSION override",
+    "platform": "linux",
+    "env": {"JEV_MONITOR_SESSION": "/tmp/custom-session.json"},
+    "homedir": "/home/me",
+    "expected": {
+      "home": "/home/me/.local/state/jev-monitor-bar",
+      "sessionFile": "/tmp/custom-session.json"
+    }
+  },
+  {
+    "name": "relative JEV_MONITOR_SESSION joined to cwd",
+    "platform": "linux",
+    "env": {"JEV_MONITOR_SESSION": "tmp/session.json"},
+    "homedir": "/home/me",
+    "cwd": "/work",
+    "expected": {
+      "home": "/home/me/.local/state/jev-monitor-bar",
+      "sessionFile": "/work/tmp/session.json"
+    }
+  },
+  {
+    "name": "empty JEV_MONITOR_SESSION falls through",
+    "platform": "linux",
+    "env": {"JEV_MONITOR_SESSION": ""},
+    "homedir": "/home/me",
+    "expected": {
+      "home": "/home/me/.local/state/jev-monitor-bar",
+      "sessionFile": "/home/me/.local/state/jev-monitor-bar/session.json"
+    }
+  },
+  {
+    "name": "paths with spaces",
+    "platform": "win32",
+    "env": {
+      "LOCALAPPDATA": "C:\\Users\\Ada Lovelace\\AppData\\Local",
+      "JEV_MONITOR_SESSION": "C:\\Users\\Ada Lovelace\\sessions\\monitor.json"
+    },
+    "homedir": "C:\\Users\\Ada Lovelace",
+    "expected": {
+      "home": "C:\\Users\\Ada Lovelace\\AppData\\Local\\jev-monitor-bar",
+      "sessionFile": "C:\\Users\\Ada Lovelace\\sessions\\monitor.json"
+    }
+  },
+  {
+    "name": "win32 relative JEV_MONITOR_HOME",
+    "platform": "win32",
+    "env": {"JEV_MONITOR_HOME": "rel\\monitor"},
+    "homedir": "C:\\Users\\me",
+    "cwd": "D:\\work\\proj",
+    "expected": {
+      "home": "D:\\work\\proj\\rel\\monitor",
+      "sessionFile": "D:\\work\\proj\\rel\\monitor\\session.json"
+    }
+  },
+  {
+    "name": "other platforms use the XDG state directory",
+    "platform": "freebsd",
+    "env": {},
+    "homedir": "/home/me",
+    "expected": {
+      "home": "/home/me/.local/state/jev-monitor-bar",
+      "sessionFile": "/home/me/.local/state/jev-monitor-bar/session.json"
+    }
+  }
+]

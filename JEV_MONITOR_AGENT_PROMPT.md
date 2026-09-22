@@ -206,7 +206,7 @@
 - 每完成一个小任务：`git add` 暂存在本地，并在 `docs/IMPLEMENTATION.md` 登记，不单独 commit。
 - 每完成一个大功能或大方向（通常是一个里程碑或其中一个可独立使用的功能）：确认类型检查和测试通过后 commit 并 push 到 GitHub，由 GitHub CI 在三个平台复验。
 - 云端 agent（如 Cursor Cloud Agent）的虚拟机结束后本地暂存会丢失，所以会话结束前即使大功能未完成，也要 commit 并 push 到自己的功能分支，标题标 `WIP`。
-- 署名：Cursor 云端 agent 直接用 Cursor Agent 账号提交，不另写署名；本地开发在提交标题末尾写 `[<harness>/<model>]`，正文末尾写 `agent-harness:` 与 `agent-model:` 两行，全部小写，例如 `[cursor/claude-opus-5.5]`。
+- 署名：Cursor 云端 agent 直接用 Cursor Agent 账号提交，不另写署名；本地开发在提交标题末尾写 `[<harness>/<model>]`，正文末尾写 `agent-harness:` 与 `agent-model:` 两行，全部小写。model 只记厂商和模型系列、不写版本号，例如 `[cursor/claude-opus]`、`[codex/gpt-sol]`。
 - 实施记录写明日期、harness、model、提交、完成内容、实际执行的验证、遗留问题。未执行的验证不得写成已通过。
 
 请从阅读 `AGENTS.md`、`docs/IMPLEMENTATION.md`、`docs/AUDIT.md` 开始，接着推进下一个未完成的里程碑，直到可运行、可验证的 MVP。

@@ -15,8 +15,8 @@
 - **Cursor 云端 agent**：直接使用环境预设的 Cursor Agent 账号提交，GitHub 上的作者就是 `cursoragent`。不需要在提交信息里另写署名，也不要改 git 的 user.name / user.email。
 - **本地开发**（在仓库所有者机器上运行的 Cursor、Codex、Claude Code 等）：提交作者是本机 git 账号，所以要在提交信息里记录 harness 和模型名称，**全部小写**，空格换成 `-`。
   - harness 是运行模型的工具，例如 `cursor`、`codex`、`claude-code`、`gemini-cli`。
-  - model 是实际模型名称，例如 `claude-opus-5.5`。
-  - 不确定的部分写 `unknown`，不要编造工具名、模型名或版本。
+  - model 只记厂商和模型系列，不写版本号，例如 `claude-opus`、`claude-sonnet`、`gpt-sol`、`gpt-terra`。
+  - 不确定的部分写 `unknown`，不要编造工具名或模型系列。
 
 ## 提交节奏
 
@@ -52,12 +52,12 @@ agent-model: <model>
 示例：
 
 ```text
-feat: windows 置顶小窗与平台模块 [cursor/claude-opus-5.5]
+feat: windows 置顶小窗与平台模块 [cursor/claude-opus]
 
 ...
 
 agent-harness: cursor
-agent-model: claude-opus-5.5
+agent-model: claude-opus
 ```
 
 查询：
@@ -67,7 +67,7 @@ agent-model: claude-opus-5.5
 git log --author='Cursor Agent' --format='%h %ad %s' --date=short
 # 本地某个 harness / 模型的提交
 git log --grep='^agent-harness: codex' --format='%h %ad %s' --date=short
-git log --grep='^agent-model: claude-opus-5.5' --format='%h %ad %s' --date=short
+git log --grep='^agent-model: claude-opus' --format='%h %ad %s' --date=short
 ```
 
 部分工具会在提交信息末尾自动追加自己的 trailer（例如 `Co-authored-by`），可能让 `git log --format='%(trailers)'` 识别不到上面两行，所以用 `--grep` 查询。

@@ -62,4 +62,4 @@
 | P11 | 计划没有考虑 Windows 杀毒软件误报：签名、版本信息、单文件自解压、子进程、注册表自启、Electron 调试入口等 | prompt 新增「Windows 杀毒软件友好」与验收项（全新 Windows 解压即用、Defender 扫描记录） |
 | P12 | 提交只标注模型署名，没有标注执行环境，GitHub 提交列表里也看不到署名 | 提交标题加 `[署名]`，正文加 `Agent-Model`（含具体模型名称）与 `Agent-Env` |
 
-P12 后续：仓库所有者改为按运行位置区分。Cursor 云端 agent 直接用 Cursor Agent 账号提交；本地开发记录小写的 harness 与 model（`[<harness>/<model>]`、`agent-harness` / `agent-model`）。旧格式作废，已有提交不改写。见实施记录 04。
+P12 后续：仓库所有者改为按运行位置区分。Cursor 云端 agent 直接用 Cursor Agent 账号提交；本地开发记录小写的 harness 与 model（`[<harness>/<model>]`、`agent-harness` / `agent-model`）。旧格式作废，已有提交不改写。见实施记录 04。model 只记厂商和系列、不写版本号（如 `claude-opus`、`gpt-sol`），见实施记录 05。

@@ -22,7 +22,7 @@
 
 - 日期：YYYY-MM-DD
 - harness：<小写，如 cursor-cloud-agent、cursor、codex、claude-code>
-- model：<小写，如 claude-opus-5.5；不确定写 unknown>
+- model：<小写，只记厂商和系列、不写版本号，如 claude-opus、gpt-sol；不确定写 unknown>
 - 提交：<hash 列表，或「本条所在提交」>
 - 内容：做了什么（按小任务逐项列出）
 - 验证：实际执行的命令/操作、平台与结果；未执行的写「未验证」
@@ -68,5 +68,15 @@
 - model：claude-opus-5.5
 - 提交：本条所在提交
 - 内容：按仓库所有者要求重写署名规则。Cursor 云端 agent 直接用 Cursor Agent 账号提交，不另写署名；本地开发在提交标题写 `[<harness>/<model>]`、正文写 `agent-harness` / `agent-model`，全部小写。实施记录模板改为 harness / model 两个小写字段。更新 `AGENTS.md`、prompt、README、`docs/AUDIT.md`。03 中 `Agent-Model` / `Agent-Env` 的格式作废，已有提交保留不改写。
+- 验证：纯文档改动；`pnpm typecheck` 与 `pnpm test` 仍通过。
+- 遗留：同 03。
+
+## 05 — 模型只记厂商和系列
+
+- 日期：2026-09-22
+- harness：cursor-cloud-agent
+- model：claude-opus
+- 提交：本条所在提交
+- 内容：按仓库所有者要求，model 字段只记厂商和模型系列、不写版本号（如 `claude-opus`、`gpt-sol`、`gpt-terra`）。更新 `AGENTS.md`、prompt、README 与实施记录模板。04 中的 `claude-opus-5.5` 按新规则应为 `claude-opus`，旧记录保留不改写。
 - 验证：纯文档改动；`pnpm typecheck` 与 `pnpm test` 仍通过。
 - 遗留：同 03。

@@ -142,3 +142,18 @@
   - status 与 snapshot 的错误分开记录，各自在对应请求成功后清除。`runId` 变化后，已停止的请求不再写入错误。
 - 验证：Linux（Node 22.14.0、pnpm 11.19.0、Electron 42.11.6、`DISPLAY=:1`）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（27 项）、`pnpm build` 通过。Playwright 打开窗口：正常目录下标题为 JEV Monitor Bar，`window.monitor` 恰好 6 个方法，`status.url` 为 `http://127.0.0.1:<port>`，没有红色错误；把 `events` 做成文件后，窗口显示同一条 `EEXIST` `storageError`，snapshot 仍是空的且未在监听。Windows / macOS 窗口未验证。
 - 遗留：窗口位置记忆、正式 UI、托盘未做。Linux 窗口管理器尺寸和默认菜单同上一则 P1-01。C6–C12 未处理。README 未改。
+
+## P1-05 — 紧凑模式 UI
+
+- 日期：2026-09-22
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：
+  - 新增 `compactModel(snapshot, status, now)`。任务名截断到 40 字；模拟数据、运行状态文字和颜色、连接状态来自已有的 `common` 纯函数。阶段取 `progress.phase`，没有则为「未知」。进度在有 `total` 时为 `completed/total`，只有 `completed` 时为「已完成 N 步」，否则为「未知」。运行时长从 `started_at` 到 `ended_at`，没有结束时间则到 `now`。
+  - 最新选择按 `later()` 取最新 decision：评估中为「正在评估候选」；失败为「失败」；Choice 显示 choice；Score 显示分数，有 legend 时附等级名（精确键，否则四舍五入到整数等级，再否则取数值最近的等级）；Noul 显示「是 N%」（`Math.round(noul * 100)`）。
+  - 实际动作为最新 attempt 的 `selected.payload.action`，来源标为「模型 / 规则 / 应用」。与对应 decision 的 choice 不同时标「已覆盖」。执行状态用该 attempt 的状态文字和颜色。最近事件取 `run.latest` 的发生时间和类型（心跳和丢弃计数本来就不进 `latest`）。其他未结束 run 的数量单独计数；下一个 run 按 `snapshot.runs` 顺序在未结束 run 中循环。
+  - `CompactView` 四行：状态点加文字、任务名、模拟徽标、连接、「置顶」「展开」；阶段 · 进度 · 时长；选择 → 动作 · 执行状态；最近事件，另有运行时显示「另有 N 个运行」并可切换。没有 run 时显示「等待宿主连接…」和接收端状态。`storageError` 为红色行，平台 notes 为一行「提示：…」。长文本用 CSS 截断，`title` 为全文。`data-testid`：`compact-root`、`compact-status`、`compact-run-name`、`compact-connection`、`compact-choice`、`compact-action`、`compact-exec-status`、`compact-expand`、`compact-pin`。
+  - 未改 `App.tsx`、`common.ts` 和构建脚本。`compact.css` 由 `CompactView` 引入，现有 esbuild 会打进 `app.css`。
+- 验证：Linux（Node 22.14.0、pnpm 11.19.0、Electron 42.11.6、`DISPLAY=:1`、X11；`XDG_SESSION_TYPE` 与 `WAYLAND_DISPLAY` 均为空）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（32 项，含边界测试）、`pnpm build` 通过。构建后用 Playwright 启动 Electron，向会话文件里的本机地址 POST 两条模拟 run。内容区约 403×107，四行都在视口内（末行 bottom 87）。界面为：状态「执行中」、任务名「模拟：整理季度报告」、「模拟数据」、连接「在线」、「汇总 · 2/5 · 1分09秒」、「打开完整报告 → 打开摘要 · 规则 · 已覆盖 · 执行中」、最近事件 `action.started`、「另有 1 个运行」。浅色背景 `rgb(246, 247, 249)`，深色背景 `rgb(20, 23, 28)`，合成截图在 Project 存储 `media/p1-05-compact-bar.png`。Windows / macOS 窗口未验证。
+- 遗留：README 未改。展开视图仍是占位。分数小数落到 legend 等级、Noul 百分比取整、失败决策文案、下一个 run 的循环顺序，见本 PR「需要协调」。默认紧凑窗口内容区只有约 107px，错误行和平台提示靠单行省略号塞进剩余高度，超长提示不会换行。

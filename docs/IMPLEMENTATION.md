@@ -142,3 +142,22 @@
   - status 与 snapshot 的错误分开记录，各自在对应请求成功后清除。`runId` 变化后，已停止的请求不再写入错误。
 - 验证：Linux（Node 22.14.0、pnpm 11.19.0、Electron 42.11.6、`DISPLAY=:1`）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（27 项）、`pnpm build` 通过。Playwright 打开窗口：正常目录下标题为 JEV Monitor Bar，`window.monitor` 恰好 6 个方法，`status.url` 为 `http://127.0.0.1:<port>`，没有红色错误；把 `events` 做成文件后，窗口显示同一条 `EEXIST` `storageError`，snapshot 仍是空的且未在监听。Windows / macOS 窗口未验证。
 - 遗留：窗口位置记忆、正式 UI、托盘未做。Linux 窗口管理器尺寸和默认菜单同上一则 P1-01。C6–C12 未处理。README 未改。
+
+## P1-07 — Python 发送器（仅标准库）
+
+- 日期：2026-09-22
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：
+  - `python/jev_monitor/paths.py` 的 `resolve_paths` 与 `src/paths.ts` 使用同一套规则，并复用 `tests/fixtures/paths-cases.json`。`win32` 用 `ntpath`，其他平台用 `posixpath`。返回 `home`、`events_dir`、`session_file`、`window_state_file`。
+  - `MonitorSender` 只用标准库。`emit` 用 `put_nowait`，不阻塞、不抛异常。后台守护线程按会话文件发送；401、连接失败或没有会话时保留当前事件，从 0.5 秒起翻倍退避，上限 5 秒。409 记为 conflict 和 dropped 并告警，不重试。400 与 413 记为 rejected 和 dropped。队列满时丢弃并计入 `telemetry.dropped`，恢复后先发这条再发积压事件。超过 `heartbeat_interval` 没有成功发送时自动发 `heartbeat`。`close` 在超时内尽量发完，支持 `with`。`enabled=False` 时方法为空操作。
+  - `python/examples/fake_host.py` 依次发送正常完成、规则覆盖、失败后重试、验证失败四个模拟运行，名称都以「模拟：」开头。
+  - CI 新增 `python` job：`windows-latest` / `ubuntu-latest` / `macos-latest` × Python 3.9 / 3.13，运行 `python -m unittest discover -s python/tests -v`。
+- 验证：
+  - Linux（Python 3.12.3）上 `python -m unittest discover -s python/tests -v` 11 项通过，连续再跑 5 次仍通过。没有接收端时 1000 次 `emit` 约 6–18 ms。
+  - Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（21 项）、`pnpm build` 通过。
+  - 同一台 Linux 上用真实 `EventStore` + `startServer` 跑 `fake_host.py`：4 个运行共 37 条事件全部 `sent`，状态为 completed、completed、completed、failed，且 `simulated` 为 true。
+  - Linux VM（`DISPLAY=:1`、Electron 42.11.6、X11）上 `pnpm start` 后运行 `JEV_MONITOR_HOME=.runtime/dev python3 python/examples/fake_host.py`。窗口从「运行数 0 / 最新事件 无 / 监听 是」变为「运行数 4 / 最新事件 run.failed / 监听 是」。
+  - 本机没有 Python 3.9。Windows / macOS 未在本机执行，见本 PR 的 GitHub Actions。
+- 遗留：根 README 未改（留给 P1-10）。规格没写明的 HTTP 状态码按连接失败重试，见 PR「需要协调」。Python 3.9 在 `macos-latest` 上能否装上，以 CI 为准。

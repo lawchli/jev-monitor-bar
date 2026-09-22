@@ -44,7 +44,9 @@ test('relative JEV_MONITOR_HOME uses process.cwd when cwd is omitted', () => {
       env: {JEV_MONITOR_HOME: 'rel'},
       homedir: '/home/me',
     } satisfies ResolveMonitorPathsOptions);
-    assert.equal(resolved.home, path.posix.join(dir, 'rel'));
+    // macOS reports process.cwd() through /private when mkdtemp used the /var symlink.
+    assert.equal(resolved.home, path.posix.join(process.cwd(), 'rel'));
+    assert.equal(path.posix.dirname(resolved.home), fs.realpathSync(dir));
   } finally {
     process.chdir(previous);
   }

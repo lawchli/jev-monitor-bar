@@ -53,7 +53,7 @@ ajv.addFormat('date-time', (v:string) => /^\d{4}-\d{2}-\d{2}T.*(Z|[+-]\d{2}:\d{2
 const check = ajv.compile(schema);
 export function validateEvent(value:unknown): asserts value is MonitorEvent {
   if (!check(value)) throw new Error(ajv.errorsText(check.errors));
-  const e=value as MonitorEvent,p=e.payload;
+  const e=value as unknown as MonitorEvent,p=e.payload;
   if(e.type==='decision.resolved' && ((p.kind==='choice' && p.choice===undefined)||(p.kind==='score' && p.score===undefined)||(p.kind==='noul' && p.noul===undefined))) throw new Error('Missing answer for primitive');
   if(p.kind==='noul' && (p.confidence!==undefined || p.probabilities!==undefined)) throw new Error('Noul has no confidence or option distribution');
   if(p.probabilities && Math.abs(Object.values(p.probabilities).reduce((a,b)=>a+b,0)-1)>0.02) throw new Error('Distribution must sum to one');

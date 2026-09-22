@@ -1,6 +1,32 @@
 # JEV Monitor Bar
 
-Windows 优先的只读决策监视小窗。宿主发送摘要事件 → 本地鉴权接收 → 追加日志 → Electron/React 小窗。此仓库独立于 `jev_zzz`。
+全平台、Windows 优先的只读决策监视小窗。宿主发送摘要事件 → 本地鉴权接收 → 追加日志 → Electron/React 小窗。此仓库独立于 `jev_zzz`。
+
+> 状态：开发中，尚不可用。目前只有事件协议、接收服务、持久化、状态聚合与脱敏等核心模块及其测试；桌面小窗、UI、Python 发送器和演示尚未实现。进度见 [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md)，已知问题见 [`docs/AUDIT.md`](docs/AUDIT.md)。
+
+## 平台支持
+
+| 平台 | 级别 | 现状 |
+| --- | --- | --- |
+| Windows 10/11 x64 | Tier 1（优先） | 核心模块在 CI 测试；桌面窗口未实现 |
+| macOS、Linux X11、Windows arm64 | Tier 2（后续适配） | 核心模块在 CI 测试；桌面窗口未实现 |
+| Linux Wayland | Tier 3（尽力而为） | 多数合成器不允许应用置顶或自定位窗口 |
+
+平台约束与目录约定见 [`JEV_MONITOR_AGENT_PROMPT.md`](JEV_MONITOR_AGENT_PROMPT.md)「平台支持策略」。
+
+设计目标是解压即用、不装额外组件、对 Windows 杀毒软件友好：最终用户不需要安装 Node.js、Python、.NET、VC++ 运行库或 WebView2，也不需要管理员权限；运行时依赖只用纯 JavaScript 包（`tests/deps.test.ts` 会检查）；运行时不启动子进程、不联网、只监听 `127.0.0.1`。发布包签名、版本信息、Electron fuses 和 Defender 扫描要求见 prompt「原生兼容、免额外组件与杀毒软件友好」。以上尚未有发布包可验证。
+
+## 开发
+
+需要 Node.js 22+ 与 pnpm 11（版本见 `package.json` 的 `packageManager`）。
+
+```bash
+pnpm install
+pnpm typecheck
+pnpm test
+```
+
+只跑核心测试时可设置 `ELECTRON_SKIP_BINARY_DOWNLOAD=1` 跳过 Electron 二进制下载。
 
 ## 已核实的边界（2026-09-23）
 
@@ -11,4 +37,6 @@ Windows 优先的只读决策监视小窗。宿主发送摘要事件 → 本地�
 - 当前可用技能目录没有 TypeSafe skill。参考项目 `JevJudgment` 与架构已只读检查：判断含 next_action、概率、confidence、latency、request_id、goal/stuck Noul、danger Score。现有 JSONL 用 `ts/kind`，不是本项目协议，需要显式适配；未读取 `.env`，未修改参考项目。
 - 采用 Electron 隔离窗口和 JSONL 有界保留；本地服务不接受浏览器跨域调用。Python 发送器仅用标准库。许可证由仓库所有者决定，暂未授予开源许可证。
 
-安装、接入与验证说明随实现补齐。开发过程按功能保留本地 Git 提交，不创建或推送远端。
+## 协作
+
+本项目由多个 AI 模型接力开发。每完成一个小任务先 `git add` 暂存在本地，每完成一个大功能或大方向再 commit 并 push 到 GitHub；云端 agent 在会话结束前推送到自己的分支。Cursor 云端 agent 直接用 Cursor Agent 账号提交；本地开发在提交里用小写记录 harness 和模型系列，不写版本号（如 `[cursor/claude-opus]`）。规则见 [`AGENTS.md`](AGENTS.md)。

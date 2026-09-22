@@ -1,0 +1,11 @@
+node_modules/
+dist/
+release/
+.runtime/
+.env
+*.log
+__pycache__/
+*.pyc
+.venv/
+coverage/
+test-results/

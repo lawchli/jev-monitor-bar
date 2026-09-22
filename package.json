@@ -1,0 +1,21 @@
+{
+  "name": "jev-monitor-bar",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local, read-only TypeSafe decision and execution monitor",
+  "main": "dist/main.cjs",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts",
+    "start": "node scripts/launch.mjs",
+    "demo": "node scripts/launch.mjs --demo",
+    "soak": "node scripts/launch.mjs --soak",
+    "desktop-test": "node scripts/desktop-test.mjs",
+    "package": "pnpm build && electron-packager . JEV-Monitor-Bar --platform=win32 --arch=x64 --out=release --overwrite --ignore=^/(tests|evidence|python|docs|scripts|src|.runtime|.git)"
+  },
+  "dependencies": {"ajv": "^8.17.1", "react": "^19.2.0", "react-dom": "^19.2.0"},
+  "devDependencies": {"@types/node": "^24.0.0", "@types/react": "^19.2.0", "@types/react-dom": "^19.2.0", "electron": "^42.0.0", "@electron/packager": "^19.0.0", "esbuild": "^0.27.0", "tsx": "^4.20.0", "typescript": "^5.9.0", "playwright": "^1.58.0"},
+  "packageManager": "pnpm@11.19.0",
+  "pnpm": {"onlyBuiltDependencies": ["electron", "esbuild"]}
+}

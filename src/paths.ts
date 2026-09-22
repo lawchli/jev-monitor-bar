@@ -25,14 +25,12 @@ function pathApiFor(platform: NodeJS.Platform): PathApi {
   return platform === 'win32' ? path.win32 : path.posix;
 }
 
-/** Drop a trailing separator so the result matches Python `normpath` (Node's `normalize` keeps it). */
+/** Drop a trailing `pathApi.sep` so the result matches Python `normpath` (Node's `normalize` keeps it). */
 function canonicalize(pathApi: PathApi, value: string): string {
   const normalized = pathApi.normalize(value);
   const root = pathApi.parse(normalized).root;
   let end = normalized;
-  while (end.length > root.length && (end.endsWith(pathApi.sep) || end.endsWith('/') || end.endsWith('\\'))) {
-    end = end.slice(0, -1);
-  }
+  while (end.length > root.length && end.endsWith(pathApi.sep)) end = end.slice(0, -1);
   return end;
 }
 

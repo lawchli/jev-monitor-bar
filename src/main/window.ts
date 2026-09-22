@@ -47,7 +47,6 @@ export function createMonitorWindow(opts: MonitorWindowOptions): {
   win.webContents.on('will-navigate', event => {
     event.preventDefault();
   });
-  void win.loadFile(path.join(__dirname, 'renderer/index.html'));
   const controller: MonitorWindowController = {
     getMode: () => mode,
     setMode(next) {
@@ -64,4 +63,9 @@ export function createMonitorWindow(opts: MonitorWindowOptions): {
     },
   };
   return {win, controller};
+}
+
+/** Load only after IPC handlers for this window are registered. */
+export function loadMonitorWindow(win: BrowserWindow) {
+  void win.loadFile(path.join(__dirname, 'renderer/index.html'));
 }

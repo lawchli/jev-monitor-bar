@@ -132,6 +132,16 @@
     }
   },
   {
+    "name": "posix trailing backslash is part of the name",
+    "platform": "linux",
+    "env": {"JEV_MONITOR_HOME": "/tmp/name\\"},
+    "homedir": "/home/me",
+    "expected": {
+      "home": "/tmp/name\\",
+      "sessionFile": "/tmp/name\\/session.json"
+    }
+  },
+  {
     "name": "JEV_MONITOR_SESSION override",
     "platform": "linux",
     "env": {"JEV_MONITOR_SESSION": "/tmp/custom-session.json"},

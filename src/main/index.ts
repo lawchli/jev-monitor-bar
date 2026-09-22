@@ -7,8 +7,9 @@ import {startServer} from '../server';
 import {IPC, type Changed, type ReceiverStatus} from '../ipc';
 import type {StoredEvent} from '../protocol';
 import {detectPlatform} from './platform';
-import {createMonitorWindow, type MonitorWindowController} from './window';
+import {createMonitorWindow, loadMonitorWindow, type MonitorWindowController} from './window';
 import {registerIpc} from './ipc-handlers';
+import {armQuit} from './lifecycle';
 
 const paths = resolveMonitorPaths();
 app.setPath('userData', paths.electronProfileDir);
@@ -25,8 +26,9 @@ if (!app.requestSingleInstanceLock()) {
   app.on('window-all-closed', () => {
     app.quit();
   });
-  app.on('before-quit', () => {
-    void closeServer?.();
+  const closing = {current: false};
+  app.on('before-quit', event => {
+    armQuit(event, closing, closeServer, () => app.quit());
   });
 
   const startedAt = new Date().toISOString();
@@ -67,13 +69,10 @@ if (!app.requestSingleInstanceLock()) {
       pinned: controller.getPinned(),
       startedAt,
     });
+    const rendererUrl = pathToFileURL(path.join(__dirname, 'renderer/index.html')).href;
+    registerIpc({store, controller, getStatus, rendererUrl, contents: win.webContents});
+    loadMonitorWindow(win);
     if (!store) return;
-    registerIpc({
-      store,
-      controller,
-      getStatus,
-      rendererUrl: pathToFileURL(path.join(__dirname, 'renderer/index.html')).href,
-    });
     let timer: NodeJS.Timeout | undefined;
     let cursor = store.cursor;
     const runIds = new Set<string>();

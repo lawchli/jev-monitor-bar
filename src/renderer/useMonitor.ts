@@ -4,7 +4,8 @@ import type {ReceiverStatus, Snapshot} from '../ipc';
 export interface MonitorState {
   snapshot?: Snapshot;
   status?: ReceiverStatus;
-  error?: string;
+  statusError?: string;
+  snapshotError?: string;
   now: number;
 }
 
@@ -12,10 +13,22 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** Keep global fields when the loaded snapshot was fetched for a different run. */
+export function projectSnapshot(
+  snapshot: Snapshot | undefined,
+  fetchedFor: string | undefined,
+  runId: string | undefined,
+): Snapshot | undefined {
+  if (!snapshot || fetchedFor === runId) return snapshot;
+  return {...snapshot, run: undefined, events: []};
+}
+
 export function useMonitor(runId?: string): MonitorState {
   const [snapshot, setSnapshot] = useState<Snapshot>();
+  const [fetchedFor, setFetchedFor] = useState<string | undefined>();
   const [status, setStatus] = useState<ReceiverStatus>();
-  const [error, setError] = useState<string>();
+  const [statusError, setStatusError] = useState<string>();
+  const [snapshotError, setSnapshotError] = useState<string>();
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -29,10 +42,12 @@ export function useMonitor(runId?: string): MonitorState {
       window.monitor
         .status()
         .then(next => {
-          if (!stopped) setStatus(next);
+          if (stopped) return;
+          setStatus(next);
+          setStatusError(undefined);
         })
         .catch(reason => {
-          if (!stopped) setError(message(reason));
+          if (!stopped) setStatusError(message(reason));
         });
     };
     load();
@@ -72,13 +87,17 @@ export function useMonitor(runId?: string): MonitorState {
       inFlight = true;
       pending = false;
       lastStart = Date.now();
+      const requested = runId;
       window.monitor
-        .snapshot(runId)
+        .snapshot(requested)
         .then(next => {
-          if (!stopped) setSnapshot(next);
+          if (stopped) return;
+          setSnapshot(next);
+          setFetchedFor(requested);
+          setSnapshotError(undefined);
         })
         .catch(reason => {
-          if (!stopped) setError(message(reason));
+          if (!stopped) setSnapshotError(message(reason));
         })
         .finally(() => {
           inFlight = false;
@@ -97,5 +116,5 @@ export function useMonitor(runId?: string): MonitorState {
     };
   }, [runId]);
 
-  return {snapshot, status, error, now};
+  return {snapshot: projectSnapshot(snapshot, fetchedFor, runId), status, statusError, snapshotError, now};
 }

@@ -3,7 +3,14 @@ import assert from 'node:assert/strict';
 import type {EventType, Payload, StoredEvent} from '../src/protocol';
 import {applyEvent, emptyRun, type RunState} from '../src/state';
 import {formatClock} from '../src/renderer/view-model/common';
-import {attemptGroups, decisionCards, decisionChain, runSummary, timelineItems} from '../src/renderer/expanded/model';
+import {
+  attemptGroups,
+  decisionCards,
+  decisionChain,
+  laterAttemptKeys,
+  runSummary,
+  timelineItems,
+} from '../src/renderer/expanded/model';
 
 function at(second: number): string {
   return new Date(Date.UTC(2026, 0, 1, 0, 0, second)).toISOString();
@@ -206,6 +213,18 @@ test('rule override chain keeps each present step and omits a model source', () 
 
   const chosen = play([event(1, 'decision.resolved', {kind: 'choice', choice: 'A'}, decisionIds('d1'))]);
   assert.equal(decisionChain(chosen, 'd1'), 'JEV 选择 A');
+
+  const confirmed = play([
+    event(1, 'decision.resolved', {kind: 'choice', choice: 'A'}, decisionIds('d1')),
+    event(
+      2,
+      'action.selected',
+      {action: 'A', source: 'rule', rule: 'X', rule_source: 'Y'},
+      {decision_id: 'd1', action_id: 'act', attempt_id: 't1'},
+    ),
+  ]);
+  assert.equal(decisionChain(confirmed, 'd1'), 'JEV 选择 A → 实际执行 A');
+  assert.equal(decisionChain(confirmed, 'd1').includes('规则覆盖'), false);
 });
 
 test('a rule action without a decision is its own card', () => {
@@ -375,6 +394,23 @@ test('timeline filter keeps failures, failed checks, drops, and later attempts',
   );
   assert.equal(all[0].typeText, '心跳');
   assert.ok(all.every(item => !item.late));
+});
+
+test('error filter keeps a later attempt when its first attempt is outside the loaded events', () => {
+  const run = play([
+    event(1, 'action.started', {}, {action_id: 'A', attempt_id: '1'}),
+    event(2, 'action.completed', {}, {action_id: 'A', attempt_id: '1'}),
+    event(3, 'action.started', {}, {action_id: 'A', attempt_id: '2'}),
+  ]);
+  const windowed = [event(3, 'action.started', {}, {action_id: 'A', attempt_id: '2'})];
+  assert.deepEqual(
+    timelineItems(windowed, 'errors').map(item => item.cursor),
+    [],
+  );
+  assert.deepEqual(
+    timelineItems(windowed, 'errors', laterAttemptKeys(run)).map(item => item.cursor),
+    [3],
+  );
 });
 
 test('timeline marks events whose clocks differ by more than five seconds', () => {

@@ -157,3 +157,18 @@
   - 未改 `App.tsx`、`common.ts`。有 `storageError` 时展开视图用红色行显示。
 - 验证：Linux（Node 22.14.0、pnpm 11.19.0、Electron 42.11.6、`DISPLAY=:1`；`XDG_SESSION_TYPE` 与 `WAYLAND_DISPLAY` 均为空，按 X11）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（30 项，含边界测试）、`pnpm build` 通过。Playwright 启动 Electron，POST 模拟事件后切到展开模式。决策页 DOM 中选中项为「A 已选」，概率更高的 B 未标已选；时间线只有 1 个「迟到」。向上滚动后按钮为「已暂停跟随 · 0 条新事件 · 回到最新」，再 POST 一条 heartbeat 后变为「已暂停跟随 · 1 条新事件 · 回到最新」。内存窗口已含全部事件时「加载更早」变为「没有更早的事件」。截图：决策页 `/cursor/stores/bc-01a0ca4b-ddb2-7f09-8eb1-b447ce56da3c/media/p1-06-expanded-view.png`，执行页 `media/p1-06-tab-execution.png`，时间线 `media/p1-06-tab-timeline.png`。Windows / macOS 窗口未验证。
 - 遗留：连接状态（在线 / 可能断开）只在紧凑模式规格里，展开摘要未重复，需要协调是否补上。计划示例的决策链在全角右括号和箭头之间没有空格（`）→`），实现在每个箭头两侧都留了空格（`） →`）。验证摘要比示例多写了「验证失败」和「未知」，避免失败被藏进分母。Score / Noul 的链分别是「JEV 评分」「JEV 判断 是 xx%」，示例只写了 Choice 的「JEV 选择」。`source: application` 不另造覆盖文案，只保留「实际执行」。README 未改。三平台 CI 见本 PR。
+
+## P1-06 — 修正跨 run 分页、同值规则链和重试筛选
+
+- 日期：2026-09-22
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：
+  - 把分支 rebase 到 `cursor/p1-01-walking-skeleton-8677` 的 `c5a3a18`。`docs/IMPLEMENTATION.md` 的冲突保留 P1-01 审计修正和 P1-06 两段记录。
+  - 「加载更早」记下请求时的 runId 和 epoch。run 改变或卸载后丢弃旧的 `page()` 响应，合并前再丢掉 `run_id` 不一致的事件。
+  - Choice 的规则动作与 JEV 选择相同时不再写成「规则覆盖」，只保留「实际执行」。动作不同时仍写覆盖。
+  - 「仅错误与重试」用 `laterAttemptKeys(run)`，按运行里全部 attempt 判断第二次及以后，不再只看当前已加载事件。
+  - 组件测试需要 DOM，因此用 `pnpm add -D jsdom` 增加开发依赖。运行时依赖没有变。
+- 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（38 通过）、`pnpm build` 通过。组件测试用延迟的 `page()`：切到另一个 run 并 resolve 后不出现原 run 的事件，切回去也不出现；同一次响应里别的 run 的事件被丢掉。Windows / macOS 窗口未验证。
+- 遗留：同上一则 P1-06。三平台 CI 见本 PR。

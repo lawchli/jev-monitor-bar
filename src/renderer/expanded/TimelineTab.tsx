@@ -5,7 +5,17 @@ import {timelineItems, type TimelineFilter, type TimelineItemModel} from './mode
 
 const renderLimit = 500;
 
-export function TimelineTab({events, runId, bridge}: {events: StoredEvent[]; runId?: string; bridge: MonitorBridge}) {
+export function TimelineTab({
+  events,
+  runId,
+  bridge,
+  retryKeys,
+}: {
+  events: StoredEvent[];
+  runId?: string;
+  bridge: MonitorBridge;
+  retryKeys?: ReadonlySet<string>;
+}) {
   const [filter, setFilter] = useState<TimelineFilter>('all');
   const [older, setOlder] = useState<StoredEvent[]>([]);
   const [following, setFollowing] = useState(true);
@@ -18,18 +28,29 @@ export function TimelineTab({events, runId, bridge}: {events: StoredEvent[]; run
   const newestRef = useRef(0);
   const pendingAdjust = useRef(false);
   const previousHeight = useRef(0);
+  const epochRef = useRef(0);
+  const runIdRef = useRef(runId);
+  runIdRef.current = runId;
 
   useEffect(() => {
+    epochRef.current += 1;
     setOlder([]);
     setExhausted(false);
     setSelected(undefined);
+    setLoading(false);
     followingRef.current = true;
     setFollowing(true);
   }, [runId]);
 
-  const merged = useMemo(() => mergeEvents(older, events), [older, events]);
+  useEffect(() => {
+    return () => {
+      epochRef.current += 1;
+    };
+  }, []);
+
+  const merged = useMemo(() => mergeEvents(older, events, runId), [older, events, runId]);
   const allItems = useMemo(() => timelineItems(merged, 'all'), [merged]);
-  const filtered = useMemo(() => timelineItems(merged, filter), [merged, filter]);
+  const filtered = useMemo(() => timelineItems(merged, filter, retryKeys), [merged, filter, retryKeys]);
   const visible = filtered.slice(-renderLimit);
   const newest = allItems.at(-1)?.cursor ?? 0;
   newestRef.current = newest;
@@ -75,24 +96,32 @@ export function TimelineTab({events, runId, bridge}: {events: StoredEvent[]; run
   }
 
   async function loadOlder() {
-    if (!runId || loading || exhausted) return;
+    const requestRunId = runIdRef.current;
+    if (!requestRunId || loading || exhausted) return;
+    const captured = epochRef.current;
     const earliest = merged.reduce((min, event) => Math.min(min, event.cursor), Number.POSITIVE_INFINITY);
     if (!Number.isFinite(earliest)) return;
     const list = listRef.current;
     previousHeight.current = list?.scrollHeight ?? 0;
     pendingAdjust.current = true;
     setLoading(true);
+    const current = () => captured === epochRef.current && runIdRef.current === requestRunId;
     try {
-      const page = await bridge.page({runId, beforeCursor: earliest, limit: 100});
-      if (page.length === 0) {
+      const page = await bridge.page({runId: requestRunId, beforeCursor: earliest, limit: 100});
+      if (!current()) {
+        pendingAdjust.current = false;
+        return;
+      }
+      const accepted = page.filter(event => event.run_id === requestRunId);
+      if (accepted.length === 0) {
         setExhausted(true);
         pendingAdjust.current = false;
       }
-      setOlder(current => mergeEvents(current, page));
+      setOlder(currentRows => mergeEvents(currentRows, accepted, requestRunId));
     } catch {
-      pendingAdjust.current = false;
+      if (current()) pendingAdjust.current = false;
     } finally {
-      setLoading(false);
+      if (current()) setLoading(false);
     }
   }
 
@@ -159,8 +188,11 @@ function TimelineRow({
   );
 }
 
-function mergeEvents(left: readonly StoredEvent[], right: readonly StoredEvent[]): StoredEvent[] {
+function mergeEvents(left: readonly StoredEvent[], right: readonly StoredEvent[], runId?: string): StoredEvent[] {
   const byCursor = new Map<number, StoredEvent>();
-  for (const event of [...left, ...right]) byCursor.set(event.cursor, event);
+  for (const event of [...left, ...right]) {
+    if (runId && event.run_id !== runId) continue;
+    byCursor.set(event.cursor, event);
+  }
   return [...byCursor.values()].sort((a, b) => a.cursor - b.cursor);
 }

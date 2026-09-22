@@ -4,7 +4,7 @@ import {statusText, truncate} from '../view-model/common';
 import {DecisionsTab} from './DecisionsTab';
 import {ExecutionTab} from './ExecutionTab';
 import {TimelineTab} from './TimelineTab';
-import {attemptGroups, decisionCards, runSummary} from './model';
+import {attemptGroups, decisionCards, laterAttemptKeys, runSummary} from './model';
 import './expanded.css';
 
 type TabId = 'decisions' | 'execution' | 'timeline';
@@ -116,7 +116,9 @@ export function ExpandedView({
           <div className="expanded-panel" role="tabpanel">
             {tab === 'decisions' ? <DecisionsTab cards={decisionCards(run)} /> : null}
             {tab === 'execution' ? <ExecutionTab groups={attemptGroups(run)} /> : null}
-            {tab === 'timeline' ? <TimelineTab events={events} runId={run.id} bridge={bridge} /> : null}
+            {tab === 'timeline' ? (
+              <TimelineTab events={events} runId={run.id} bridge={bridge} retryKeys={laterAttemptKeys(run)} />
+            ) : null}
           </div>
         </>
       )}

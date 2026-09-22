@@ -249,9 +249,13 @@ function verificationLink(attempt: Attempt | undefined): string | undefined {
   return '验证：未知';
 }
 
-function overrideLink(attempt: Attempt | undefined): string | undefined {
+function overrideLink(attempt: Attempt | undefined, decision: Decision): string | undefined {
   const payload = attempt?.selected?.payload;
   if (!payload || payload.source !== 'rule' || !payload.action) return undefined;
+  const resolved = decision.resolved?.payload;
+  // A rule that selects the same Choice is not an override.
+  if (resolved?.kind === 'choice' && resolved.choice !== undefined && payload.action === resolved.choice)
+    return undefined;
   const rule = payload.rule || NOT_PROVIDED;
   const ruleSource = payload.rule_source || NOT_PROVIDED;
   return `规则覆盖为 ${payload.action}（规则 ${rule} · 来源 ${ruleSource}）`;
@@ -290,7 +294,7 @@ export function decisionChain(run: RunState, decisionId: string): string {
   const chosen = jevLink(decision);
   if (chosen) parts.push(chosen);
   const attempt = latestAttempt(attemptsFor(run, decisionId));
-  const override = overrideLink(attempt);
+  const override = overrideLink(attempt, decision);
   if (override) parts.push(override);
   const action = attempt?.selected?.payload.action;
   if (action) parts.push(`实际执行 ${action}`);
@@ -528,6 +532,26 @@ export function attemptGroups(run: RunState): AttemptGroupModel[] {
   return groups.map(({actionId, action, rows}) => ({actionId, action, rows}));
 }
 
+function attemptKey(actionId: string, attemptId: string): string {
+  return `${actionId}\0${attemptId}`;
+}
+
+/** Attempts after the first one for each action, using the run's full attempt history. */
+export function laterAttemptKeys(run: RunState): Set<string> {
+  const grouped = new Map<string, Attempt[]>();
+  for (const attempt of Object.values(run.attempts)) {
+    const list = grouped.get(attempt.action_id) ?? [];
+    list.push(attempt);
+    grouped.set(attempt.action_id, list);
+  }
+  const keys = new Set<string>();
+  for (const [actionId, attempts] of grouped) {
+    const ordered = [...attempts].sort(byOldest);
+    for (const attempt of ordered.slice(1)) keys.add(attemptKey(actionId, attempt.id));
+  }
+  return keys;
+}
+
 function retryKeys(events: readonly StoredEvent[]): Set<string> {
   const first = new Map<string, string>();
   const keys = new Set<string>();
@@ -539,16 +563,16 @@ function retryKeys(events: readonly StoredEvent[]): Set<string> {
       first.set(event.action_id, event.attempt_id);
       continue;
     }
-    if (seen !== event.attempt_id) keys.add(`${event.action_id}\0${event.attempt_id}`);
+    if (seen !== event.attempt_id) keys.add(attemptKey(event.action_id, event.attempt_id));
   }
   return keys;
 }
 
-function isErrorOrRetry(event: StoredEvent, retries: Set<string>): boolean {
+function isErrorOrRetry(event: StoredEvent, retries: ReadonlySet<string>): boolean {
   if (event.type.endsWith('.failed')) return true;
   if (event.type === 'verification.completed' && event.payload.result === 'failed') return true;
   if (event.type === 'telemetry.dropped') return true;
-  return Boolean(event.action_id && event.attempt_id && retries.has(`${event.action_id}\0${event.attempt_id}`));
+  return Boolean(event.action_id && event.attempt_id && retries.has(attemptKey(event.action_id, event.attempt_id)));
 }
 
 function isLate(event: StoredEvent): boolean {
@@ -558,8 +582,12 @@ function isLate(event: StoredEvent): boolean {
   return Math.abs(received - occurred) > 5000;
 }
 
-export function timelineItems(events: readonly StoredEvent[], filter: TimelineFilter): TimelineItemModel[] {
-  const retries = filter === 'errors' ? retryKeys(events) : undefined;
+export function timelineItems(
+  events: readonly StoredEvent[],
+  filter: TimelineFilter,
+  retryKeysFromRun?: ReadonlySet<string>,
+): TimelineItemModel[] {
+  const retries = filter === 'errors' ? (retryKeysFromRun ?? retryKeys(events)) : undefined;
   return [...events]
     .filter(event => !retries || isErrorOrRetry(event, retries))
     .sort((left, right) => left.cursor - right.cursor)

@@ -10,9 +10,13 @@
 
 ## 署名
 
-- 署名格式：`<工具>-<模型家族>`，例如 `Cursor-Claude`、`Cursor-GPT`、`Codex-GPT`、`ClaudeCode-Claude`、`GeminiCLI-Gemini`。括号里补充具体模型名称，例如 `Cursor-Claude (Claude Opus 5.5)`。
-- 执行环境：写实际运行的环境，例如 `Cursor Cloud Agent`、`Cursor IDE (Windows)`、`Codex CLI (macOS)`。
-- 不确定的部分写「未记录」，不要编造工具名、模型名或版本。
+按运行位置分两种情况：
+
+- **Cursor 云端 agent**：直接使用环境预设的 Cursor Agent 账号提交，GitHub 上的作者就是 `cursoragent`。不需要在提交信息里另写署名，也不要改 git 的 user.name / user.email。
+- **本地开发**（在仓库所有者机器上运行的 Cursor、Codex、Claude Code 等）：提交作者是本机 git 账号，所以要在提交信息里记录 harness 和模型名称，**全部小写**，空格换成 `-`。
+  - harness 是运行模型的工具，例如 `cursor`、`codex`、`claude-code`、`gemini-cli`。
+  - model 是实际模型名称，例如 `claude-opus-5.5`。
+  - 不确定的部分写 `unknown`，不要编造工具名、模型名或版本。
 
 ## 提交节奏
 
@@ -26,33 +30,49 @@
 
 ## 提交信息格式
 
+Cursor 云端 agent：
+
 ```text
-<type>: <做了什么> [<署名>]
+<type>: <做了什么>
+
+<为什么这样做、主要改动>
+```
+
+本地开发：标题末尾加 `[<harness>/<model>]`，正文末尾加两行小写 trailer。
+
+```text
+<type>: <做了什么> [<harness>/<model>]
 
 <为什么这样做、主要改动>
 
-Agent-Model: <署名> (<具体模型名称>)
-Agent-Env: <执行环境>
+agent-harness: <harness>
+agent-model: <model>
 ```
 
 示例：
 
 ```text
-feat: Windows 置顶小窗与平台模块 [Cursor-Claude]
+feat: windows 置顶小窗与平台模块 [cursor/claude-opus-5.5]
 
 ...
 
-Agent-Model: Cursor-Claude (Claude Opus 5.5)
-Agent-Env: Cursor Cloud Agent
+agent-harness: cursor
+agent-model: claude-opus-5.5
 ```
 
-标题里的 `[署名]` 让 GitHub 提交列表里直接能看到是谁做的。查某个模型做过的提交：
+查询：
 
 ```bash
-git log --grep='^Agent-Model: Cursor-Claude' --format='%h %ad %s' --date=short
+# Cursor 云端 agent 的提交
+git log --author='Cursor Agent' --format='%h %ad %s' --date=short
+# 本地某个 harness / 模型的提交
+git log --grep='^agent-harness: codex' --format='%h %ad %s' --date=short
+git log --grep='^agent-model: claude-opus-5.5' --format='%h %ad %s' --date=short
 ```
 
-部分工具会在提交信息末尾自动追加自己的 trailer（例如 `Co-authored-by`），可能让 `git log --format='%(trailers)'` 识别不到 `Agent-Model`，所以用 `--grep` 查询；权威的署名记录以 `docs/IMPLEMENTATION.md` 为准。
+部分工具会在提交信息末尾自动追加自己的 trailer（例如 `Co-authored-by`），可能让 `git log --format='%(trailers)'` 识别不到上面两行，所以用 `--grep` 查询。
+
+本仓库早期提交（记录 02、03）使用过 `Agent-Model:` / `Agent-Env:` 和 `[Cursor-Claude]` 的旧格式，保留不改写。
 
 ## 代码约定
 

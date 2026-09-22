@@ -39,4 +39,4 @@ pnpm test
 
 ## 协作
 
-本项目由多个 AI 模型接力开发。每完成一个小任务先 `git add` 暂存在本地，每完成一个大功能或大方向再 commit 并 push 到 GitHub；云端 agent 在会话结束前推送到自己的分支。每个提交标注执行环境和模型名称（如 `[Cursor-Claude]`、`Agent-Env: Cursor Cloud Agent`）。规则见 [`AGENTS.md`](AGENTS.md)。
+本项目由多个 AI 模型接力开发。每完成一个小任务先 `git add` 暂存在本地，每完成一个大功能或大方向再 commit 并 push 到 GitHub；云端 agent 在会话结束前推送到自己的分支。Cursor 云端 agent 直接用 Cursor Agent 账号提交；本地开发在提交里用小写记录 harness 和模型名称（如 `[cursor/claude-opus-5.5]`）。规则见 [`AGENTS.md`](AGENTS.md)。

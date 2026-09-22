@@ -21,8 +21,8 @@
 ## NN — 标题
 
 - 日期：YYYY-MM-DD
-- 模型：<工具>-<模型家族>（具体模型名称）
-- 环境：<执行环境，如 Cursor Cloud Agent、Cursor IDE (Windows)>
+- harness：<小写，如 cursor-cloud-agent、cursor、codex、claude-code>
+- model：<小写，如 claude-opus-5.5；不确定写 unknown>
 - 提交：<hash 列表，或「本条所在提交」>
 - 内容：做了什么（按小任务逐项列出）
 - 验证：实际执行的命令/操作、平台与结果；未执行的写「未验证」
@@ -60,3 +60,13 @@
   - 新增 `tests/deps.test.ts`：检查运行时依赖及其传递依赖没有原生扩展和安装脚本。
 - 验证：Linux 上 `pnpm typecheck` 通过，`pnpm test` 10 项全部通过。临时把 esbuild、electron 加入运行时依赖时，依赖检查能正确报错（已还原）。三平台 CI 结果见推送后的 GitHub Actions。
 - 遗留：杀毒软件友好的各项要求要到 M5 打包时才能实际验证；其余同 02。
+
+## 04 — 按运行位置区分署名方式
+
+- 日期：2026-09-22
+- harness：cursor-cloud-agent
+- model：claude-opus-5.5
+- 提交：本条所在提交
+- 内容：按仓库所有者要求重写署名规则。Cursor 云端 agent 直接用 Cursor Agent 账号提交，不另写署名；本地开发在提交标题写 `[<harness>/<model>]`、正文写 `agent-harness` / `agent-model`，全部小写。实施记录模板改为 harness / model 两个小写字段。更新 `AGENTS.md`、prompt、README、`docs/AUDIT.md`。03 中 `Agent-Model` / `Agent-Env` 的格式作废，已有提交保留不改写。
+- 验证：纯文档改动；`pnpm typecheck` 与 `pnpm test` 仍通过。
+- 遗留：同 03。

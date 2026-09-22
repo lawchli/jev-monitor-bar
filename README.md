@@ -14,6 +14,8 @@
 
 平台约束与目录约定见 [`JEV_MONITOR_AGENT_PROMPT.md`](JEV_MONITOR_AGENT_PROMPT.md)「平台支持策略」。
 
+设计目标是解压即用、不装额外组件、对 Windows 杀毒软件友好：最终用户不需要安装 Node.js、Python、.NET、VC++ 运行库或 WebView2，也不需要管理员权限；运行时依赖只用纯 JavaScript 包（`tests/deps.test.ts` 会检查）；运行时不启动子进程、不联网、只监听 `127.0.0.1`。发布包签名、版本信息、Electron fuses 和 Defender 扫描要求见 prompt「原生兼容、免额外组件与杀毒软件友好」。以上尚未有发布包可验证。
+
 ## 开发
 
 需要 Node.js 22+ 与 pnpm 11（版本见 `package.json` 的 `packageManager`）。
@@ -37,4 +39,4 @@ pnpm test
 
 ## 协作
 
-本项目由多个 AI 模型接力开发。每完成一项任务都要提交并推送到 GitHub，提交和实施记录中标注模型署名（如 `Cursor-Claude`）。规则见 [`AGENTS.md`](AGENTS.md)。
+本项目由多个 AI 模型接力开发。每完成一个小任务先 `git add` 暂存在本地，每完成一个大功能或大方向再 commit 并 push 到 GitHub；云端 agent 在会话结束前推送到自己的分支。每个提交标注执行环境和模型名称（如 `[Cursor-Claude]`、`Agent-Env: Cursor Cloud Agent`）。规则见 [`AGENTS.md`](AGENTS.md)。

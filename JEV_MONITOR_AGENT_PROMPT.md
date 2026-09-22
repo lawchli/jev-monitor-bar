@@ -13,7 +13,7 @@
 
 本仓库独立于 `jev_zzz`，不要把 `jev_zzz` 改造成监控产品，也不要复制整个现有项目。现有项目只用作首个适配参考。
 
-仓库所有者已授权：每完成一项任务就 commit 并 push 到 GitHub（规则见下文「多模型协作与提交规范」）。仍不得自行创建 GitHub Release、修改仓库设置、设定许可证或发布安装包到公开渠道。
+仓库所有者已授权：每完成一个小任务先 `git add` 暂存在本地，每完成一个大功能或大方向再 commit 并 push 到 GitHub（规则见下文「多模型协作与提交规范」）。仍不得自行创建 GitHub Release、修改仓库设置、设定许可证或发布安装包到公开渠道。
 
 ## 先核实，再实现
 
@@ -72,6 +72,35 @@
 - 打包在对应系统上构建：首版只要求 Windows 包（便携版或安装包）；macOS 签名/公证、Linux AppImage/deb 后续再做。未签名会触发 SmartScreen / Gatekeeper 提示，README 须说明。
 - CI 在 `windows-latest`（必须通过）、`ubuntu-latest`、`macos-latest` 上跑类型检查与测试。CI 通过不等于原生窗口行为已验证；有桌面冒烟测试后优先在 Windows runner 上运行并上传截图。
 
+## 原生兼容、免额外组件与杀毒软件友好
+
+目标：用户下载后直接运行，不需要另装任何组件；在 Windows 上不被 Microsoft Defender 等杀毒软件误报或拦截；在每个平台都遵循该平台的原生习惯。
+
+### 免额外组件
+
+- 最终用户运行监视器，不需要安装 Node.js、Python、.NET、VC++ 运行库、WebView2 或其他运行时。Electron 自带 Chromium 与 Node，这是选择它的理由之一（Tauri 在 Windows 依赖 WebView2 运行时，部分 Windows 10 环境需要另装或联网引导安装）。
+- 运行时依赖（`package.json` 的 `dependencies`）只允许纯 JavaScript 包：不引入原生 Node 扩展（`.node` 文件、node-gyp / `binding.gyp`），也不引入带 install/postinstall 脚本的包。持久化继续用 JSONL；若改用 SQLite，只能用运行时内置模块，不用 better-sqlite3 等原生扩展。`tests/deps.test.ts` 会检查这一点。
+- 宿主端 Python 发送器只用标准库，不要求宿主额外 `pip install` 第三方包，可以单文件复制接入。
+- 不需要管理员权限：按用户安装在用户目录，Windows 清单使用 `asInvoker`；不安装服务、驱动或计划任务。
+- 运行时不联网下载任何组件；首版不做自动更新。
+
+### Windows 杀毒软件友好
+
+- 发布包使用 Authenticode 代码签名。证书由仓库所有者决定并提供，CI 通过 Secrets 注入，不提交进仓库。未签名的版本须在 README 说明 SmartScreen 提示，并附发布文件的 SHA-256。
+- 可执行文件填写完整版本信息（CompanyName、FileDescription、ProductName、FileVersion），文件名和安装路径固定，不随机命名。
+- 首版发布为解压即用的目录 zip。不用「单文件便携版」（每次启动解压到临时目录再执行，容易被启发式拦截且启动慢）；不用 UPX 等加壳、自解压或代码混淆。具备签名后再提供 NSIS / MSIX 安装包。
+- 运行时不做以下行为：启动 PowerShell / cmd 或其他子进程，从临时目录执行文件，写注册表 Run 键或启动文件夹（开机自启只能由用户明确开启，并通过 Electron 官方 API 实现），全局键盘/鼠标钩子，读写或注入其他进程，修改防火墙规则，截屏或录屏。
+- 网络只连接 `127.0.0.1`，不监听 `0.0.0.0`，不访问外网，不带遥测。
+- 文件写入限制在自己的数据目录内，写入总量有界、轮转平缓，避免高频创建和删除大量小文件。
+- 打包时用 Electron fuses 关闭 `RunAsNode`、`NODE_OPTIONS`、`--inspect` 等调试入口，并启用 ASAR 完整性校验，避免发布包被滥用为可执行任意脚本的宿主程序。
+- 每次发布前，在 Windows 实机用 Microsoft Defender 扫描发布包并记录结果；遇到误报，通过 Microsoft 安全情报门户提交。是否上传 VirusTotal 等公开服务由仓库所有者决定（上传即公开样本）。
+
+### 各平台原生习惯
+
+- 数据目录按上文各平台约定；跟随系统的深浅色、缩放和「减弱动态效果」设置；使用各平台常规窗口类型与标题栏行为，不做透明全屏覆盖层。
+- 打包格式按平台原生：Windows 为目录 zip，签名后提供安装包；macOS 为 `.app` / `.dmg`（签名并公证后）；Linux 为 AppImage / deb。
+- 快捷键、托盘/菜单栏图标等交互按各平台惯例实现，平台差异仍集中在平台模块。
+
 ## 必须实现的体验
 
 ### 常驻小窗
@@ -102,7 +131,7 @@
 
 用「宿主任务 → 轻量事件发送器 → 本地接收与持久化 → 实时 UI」解耦。
 
-已选定 TypeScript + React + Electron 做桌面窗口和本地服务，配一个标准库 Python 发送器。选 Electron 而非 Tauri 的主要理由是跨平台一致性：Tauri 在三个平台分别使用 WebView2、WKWebView、WebKitGTK，渲染与置顶行为差异更大；Electron 自带 Chromium，置顶窗口 API 成熟。若后续要换，须说明理由并重新验证三个平台的置顶与安装流程。不要引入云服务、账号系统或付费监控依赖。
+已选定 TypeScript + React + Electron 做桌面窗口和本地服务，配一个标准库 Python 发送器。选 Electron 而非 Tauri 的主要理由是跨平台一致性和免额外组件：Tauri 在三个平台分别使用 WebView2、WKWebView、WebKitGTK，渲染与置顶行为差异更大，Windows 上还依赖 WebView2 运行时；Electron 自带 Chromium，置顶窗口 API 成熟。若后续要换，须说明理由并重新验证三个平台的置顶与安装流程。不要引入云服务、账号系统或付费监控依赖。
 
 - 首版只读观测，不实现任务操控、自动纠错、暂停宿主或人工批准动作。
 - UI 关闭、监视器离线或数据发送失败，不应阻塞或改变宿主任务。发送端使用有界队列、短超时，丢弃时记录计数。
@@ -147,20 +176,21 @@
 
 ## 实施顺序
 
-每个里程碑拆成可独立验证的小任务，每完成一项就提交推送并在 `docs/IMPLEMENTATION.md` 登记。里程碑状态以该文件为准。
+每个里程碑拆成可独立验证的小任务：每完成一项就 `git add` 暂存并在 `docs/IMPLEMENTATION.md` 登记；里程碑（或其中一个大功能）完成后再 commit 并 push。里程碑状态以该文件为准。
 
 1. M0 核实与骨架：核实 API、环境和已有工具，确定最小架构。
 2. M1 核心：定义事件协议与固定演示数据，完成接收、持久化和状态聚合，并有单元测试与三平台 CI。
 3. M2 桌面壳：Electron 主进程、平台模块、preload、置顶小窗（Windows 先行），打通真实事件流到小窗。
 4. M3 UI：紧凑/展开模式、详情、时间线、历史、断线提示、导出与回放。
-5. M4 接入：轻量 Python 发送器和示例宿主；无 API key 也能用一条命令（`pnpm demo`）启动演示。
-6. M5 验证与交付：接入文档、延迟与长时负载测试、Windows 实机截图/录屏、Windows 打包；再逐步补 macOS / Linux 实机验证。
+5. M4 接入：轻量 Python 发送器（仅标准库）和示例宿主；无 API key 也能用一条命令（`pnpm demo`）启动演示。
+6. M5 验证与交付：接入文档、延迟与长时负载测试、Windows 实机截图/录屏、Windows 打包（版本信息、fuses、可签名流程）与 Defender 扫描；再逐步补 macOS / Linux 实机验证。
 
 演示必须明确标注「模拟数据」，至少包含正常完成、概率分散、规则覆盖、动作执行失败后重试、执行完成但验证失败、连接中断后恢复。演示通过与正式接入相同的协议发送事件，不绕过接收层硬写前端状态。
 
 ## 验收与交付
 
 - 全新检出按照 README 可安装并运行（Windows 必须，macOS/Linux 在各自适配完成后）；无 TypeSafe key 可演示，有接入说明可连接真实宿主。
+- 在未安装 Node.js / Python / 其他运行时的全新 Windows 10/11 上，解压发布包即可运行，不需要管理员权限；发布包经 Microsoft Defender 扫描无告警，记录系统版本、Defender 情报版本和日期。
 - 独立小窗确实置顶并持续更新；提供截图或录屏，并注明平台与系统版本。若环境无法验证原生窗口（例如 Linux 云端 agent 无法验证 Windows 窗口），明确列为未验证，不得只凭构建成功宣称完成。
 - 本地事件接收到可见更新目标 p95 ≤ 500 ms，记录测试机器、操作系统、事件量和测量方法；不把模型响应耗时算作 UI 延迟。
 - 用至少 30 分钟、累计 10,000 条事件的合成负载检查内存、响应性与存储增长，报告实测结果、平台和限制。
@@ -173,8 +203,10 @@
 
 本项目由多个 AI 模型/工具接力完成，完整规则见 `AGENTS.md`，要点：
 
-- 每完成一项任务（一个可独立验证的改动）立即 commit 并 push 到 GitHub，不要攒到最后一次性提交。
-- 每个提交和每条实施记录都要标注模型署名，格式为 `<工具>-<模型家族>`，例如 `Cursor-Claude`、`Codex-GPT`、`ClaudeCode-Claude`、`Cursor-GPT`。commit message 末尾加一行 `Agent-Model: <署名>`。
-- 在 `docs/IMPLEMENTATION.md` 追加一条记录：日期、模型署名、提交、完成内容、实际执行的验证、遗留问题。未执行的验证不得写成已通过。
+- 每完成一个小任务：`git add` 暂存在本地，并在 `docs/IMPLEMENTATION.md` 登记，不单独 commit。
+- 每完成一个大功能或大方向（通常是一个里程碑或其中一个可独立使用的功能）：确认类型检查和测试通过后 commit 并 push 到 GitHub，由 GitHub CI 在三个平台复验。
+- 云端 agent（如 Cursor Cloud Agent）的虚拟机结束后本地暂存会丢失，所以会话结束前即使大功能未完成，也要 commit 并 push 到自己的功能分支，标题标 `WIP`。
+- 每个提交都要标注执行环境和模型名称：标题末尾写 `[<署名>]`，正文末尾写 `Agent-Model:` 与 `Agent-Env:` 两行，例如 `Agent-Model: Cursor-Claude (Claude Opus 5.5)`、`Agent-Env: Cursor Cloud Agent`。
+- 实施记录写明日期、署名、环境、提交、完成内容、实际执行的验证、遗留问题。未执行的验证不得写成已通过。
 
 请从阅读 `AGENTS.md`、`docs/IMPLEMENTATION.md`、`docs/AUDIT.md` 开始，接着推进下一个未完成的里程碑，直到可运行、可验证的 MVP。

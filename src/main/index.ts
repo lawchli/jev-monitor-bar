@@ -9,7 +9,7 @@ import type {StoredEvent} from '../protocol';
 import {detectPlatform} from './platform';
 import {createMonitorWindow, loadMonitorWindow, type MonitorWindowController} from './window';
 import {registerIpc} from './ipc-handlers';
-import {armQuit} from './lifecycle';
+import {armQuit, recordCleanupFailure} from './lifecycle';
 
 const paths = resolveMonitorPaths();
 app.setPath('userData', paths.electronProfileDir);
@@ -26,14 +26,22 @@ if (!app.requestSingleInstanceLock()) {
   app.on('window-all-closed', () => {
     app.quit();
   });
+  let storageError: string | undefined;
   const closing = {current: false};
   app.on('before-quit', event => {
-    armQuit(event, closing, closeServer, () => app.quit());
+    armQuit(
+      event,
+      closing,
+      closeServer,
+      () => app.quit(),
+      error => {
+        storageError = recordCleanupFailure(storageError, error);
+      },
+    );
   });
 
   const startedAt = new Date().toISOString();
   void app.whenReady().then(async () => {
-    let storageError: string | undefined;
     let listening = false;
     let url: string | undefined;
     let store: EventStore | undefined;

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {EventStore} from '../src/store';
 import {startServer} from '../src/server';
-import {readSessionFile, writeSessionFile} from '../src/session';
+import {readSessionFile, removeSessionFileIfOwned, writeSessionFile} from '../src/session';
 
 const tempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'jev-monitor-'));
 
@@ -68,4 +68,44 @@ test('closing the server deletes its session file and leaves another owner in pl
   fs.writeFileSync(replaced, JSON.stringify({url: 'http://127.0.0.1:2', token: 'other-owner'}));
   await again.close();
   assert.equal(readSessionFile(replaced)?.token, 'other-owner');
+});
+
+test('owned removal retries Windows lock errors and then deletes', t => {
+  const file = path.join(tempDir(), 'session.json');
+  writeSessionFile(file, {url: 'http://127.0.0.1:9', token: 'ours'});
+  const original = fs.unlinkSync;
+  const codes = ['EPERM', 'EBUSY', 'EACCES'];
+  let calls = 0;
+  t.mock.method(fs, 'unlinkSync', (target: fs.PathLike) => {
+    calls += 1;
+    if (calls <= codes.length) throw Object.assign(new Error('locked'), {code: codes[calls - 1]});
+    return original(target);
+  });
+  removeSessionFileIfOwned(file, 'ours');
+  assert.equal(calls, 4);
+  assert.equal(fs.existsSync(file), false);
+});
+
+test('owned removal ignores ENOENT after the token check', t => {
+  const file = path.join(tempDir(), 'session.json');
+  writeSessionFile(file, {url: 'http://127.0.0.1:9', token: 'ours'});
+  t.mock.method(fs, 'unlinkSync', () => {
+    throw Object.assign(new Error('gone'), {code: 'ENOENT'});
+  });
+  assert.doesNotThrow(() => removeSessionFileIfOwned(file, 'ours'));
+  assert.equal(readSessionFile(file)?.token, 'ours');
+});
+
+test('owned removal stops when the token changes during a lock retry', t => {
+  const file = path.join(tempDir(), 'session.json');
+  writeSessionFile(file, {url: 'http://127.0.0.1:9', token: 'ours'});
+  let calls = 0;
+  t.mock.method(fs, 'unlinkSync', () => {
+    calls += 1;
+    fs.writeFileSync(file, JSON.stringify({url: 'http://127.0.0.1:1', token: 'theirs'}));
+    throw Object.assign(new Error('locked'), {code: 'EPERM'});
+  });
+  removeSessionFileIfOwned(file, 'ours');
+  assert.equal(calls, 1);
+  assert.equal(readSessionFile(file)?.token, 'theirs');
 });

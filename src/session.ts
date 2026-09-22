@@ -50,8 +50,39 @@ export function readSessionFile(file: string): {url: string; token: string} | un
   }
 }
 
+function lookAtSession(file: string): {token?: string; code?: string} {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as unknown;
+    if (!parsed || typeof parsed !== 'object') return {};
+    const token = (parsed as {token?: unknown}).token;
+    return typeof token === 'string' ? {token} : {};
+  } catch (err) {
+    return {code: (err as NodeJS.ErrnoException).code};
+  }
+}
+
 export function removeSessionFileIfOwned(file: string, token: string) {
-  const current = readSessionFile(file);
-  if (current?.token !== token) return;
-  fs.unlinkSync(file);
+  const maxRetries = 5;
+  for (let attempt = 0; ; attempt++) {
+    const seen = lookAtSession(file);
+    if (seen.code === 'ENOENT' || (seen.token !== undefined && seen.token !== token)) return;
+    const locked = seen.code !== undefined && retryable.has(seen.code);
+    if (seen.token !== token) {
+      if (!locked || attempt >= maxRetries) {
+        if (locked) throw Object.assign(new Error('Session file is locked'), {code: seen.code});
+        return;
+      }
+    } else {
+      try {
+        fs.unlinkSync(file);
+        return;
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === 'ENOENT') return;
+        if (attempt >= maxRetries || !code || !retryable.has(code)) throw err;
+      }
+    }
+    // Re-read before the next try so a replaced token is left alone.
+    waitMs(20 * (attempt + 1));
+  }
 }

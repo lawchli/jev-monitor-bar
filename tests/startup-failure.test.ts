@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import type {ReceiverStatus, Snapshot} from '../src/ipc';
-import {armQuit} from '../src/main/lifecycle';
+import {armQuit, recordCleanupFailure} from '../src/main/lifecycle';
 import {createMonitorHandlers, type IpcSender, type RendererContents} from '../src/main/ipc-api';
 import {projectSnapshot} from '../src/renderer/useMonitor';
 import {startServer} from '../src/server';
@@ -121,7 +121,7 @@ test('armQuit waits for server close and does not block a quit with no server', 
   );
   assert.equal(prevented, 1);
   release();
-  await Promise.resolve();
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal(quit, 1);
 
   let blocked = 0;
@@ -136,6 +136,28 @@ test('armQuit waits for server close and does not block a quit with no server', 
     () => {},
   );
   assert.equal(blocked, 0);
+});
+
+test('armQuit records a cleanup rejection and still quits', async () => {
+  const errors: unknown[] = [];
+  let quit = 0;
+  armQuit(
+    {preventDefault() {}},
+    {current: false},
+    () => Promise.reject(new Error('locked')),
+    () => {
+      quit += 1;
+    },
+    error => {
+      errors.push(error);
+    },
+  );
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(quit, 1);
+  assert.equal(errors.length, 1);
+  assert.match((errors[0] as Error).message, /locked/);
+  assert.equal(recordCleanupFailure(undefined, errors[0]), 'locked');
+  assert.equal(recordCleanupFailure('disk full', errors[0]), 'disk full; locked');
 });
 
 test('session publication failure closes the listener', async () => {

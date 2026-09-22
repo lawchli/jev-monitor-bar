@@ -142,3 +142,16 @@
   - status 与 snapshot 的错误分开记录，各自在对应请求成功后清除。`runId` 变化后，已停止的请求不再写入错误。
 - 验证：Linux（Node 22.14.0、pnpm 11.19.0、Electron 42.11.6、`DISPLAY=:1`）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（27 项）、`pnpm build` 通过。Playwright 打开窗口：正常目录下标题为 JEV Monitor Bar，`window.monitor` 恰好 6 个方法，`status.url` 为 `http://127.0.0.1:<port>`，没有红色错误；把 `events` 做成文件后，窗口显示同一条 `EEXIST` `storageError`，snapshot 仍是空的且未在监听。Windows / macOS 窗口未验证。
 - 遗留：窗口位置记忆、正式 UI、托盘未做。Linux 窗口管理器尺寸和默认菜单同上一则 P1-01。C6–C12 未处理。README 未改。
+
+## P1-02 — 核心健壮性（C6 / C7 / C9）
+
+- 日期：2026-09-22
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：
+  - C6：重启恢复时，`JSON.parse` 成功且 `cursor` 为安全整数的行计入高水位，即使 schema 或信封校验失败；完全无法解析的行只计入 `corruptLines`，不抬高 cursor。下一条写入使用高水位加 1。
+  - C7：内存中的 run 超过 200 时，先淘汰 `ended_at` 已设置且 `last_received` 最早的一个；没有已结束的 run 时，再淘汰 `last_received` 最早的一个。`last_received` 相同则保留先插入的 run。
+  - C9：新增 `src/session.ts`。`writeSessionFile` 先创建目录，写入 `<file>.<pid>.<随机hex>.tmp`（mode 0600），再 `rename` 覆盖目标；遇到 `EPERM`/`EBUSY`/`EACCES` 时最多再试 5 次，第 n 次前用 `Atomics.wait` 等待 20×n ms；失败则删除临时文件后抛错。成功后总是尝试 `chmod` 0600。`readSessionFile` 在文件缺失、JSON 损坏或 `url`/`token` 不是字符串时返回 `undefined`。`removeSessionFileIfOwned` 只在文件中的 token 与传入值一致时删除。`startServer` 改用 `writeSessionFile`；`close()` 在 server 关闭后调用 `removeSessionFileIfOwned`。写入失败时沿用 P1-01：关掉已监听的端口和连接再抛出，并且 `listen` 成功后移除临时 `error` 监听。
+- 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（28 项，含边界测试）、`pnpm build` 通过。POSIX 上把已有 0644 会话文件重写后断言为 0600（本机 Linux 执行了该断言）。`renameSync` 用 mock 连续抛出两次 `EPERM` 后成功。Windows / macOS 未在本机执行，三平台 CI 见本 PR。
+- 遗留：C8、C10–C12 未处理。Windows 上 `mode` 和 `chmod` 不改变 ACL，会话文件仍依赖用户目录权限。`last_received` 相同时保留先插入的 run（规格未规定并列）。非 `EPERM`/`EBUSY`/`EACCES` 的 rename 错误不重试，但会删除临时文件再抛错，避免 token 留在 `.tmp`。README 未改。

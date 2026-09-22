@@ -1,8 +1,7 @@
 import http from 'node:http';
 import {randomBytes, timingSafeEqual} from 'node:crypto';
-import fs from 'node:fs';
-import path from 'node:path';
 import {EventStore} from './store';
+import {removeSessionFileIfOwned, writeSessionFile} from './session';
 export async function startServer(store: EventStore, sessionFile: string, port = 0) {
   const token = randomBytes(32).toString('hex');
   const server = http.createServer(async (req, res) => {
@@ -88,8 +87,7 @@ export async function startServer(store: EventStore, sessionFile: string, port =
   const address = server.address() as {port: number};
   const session = {url: `http://127.0.0.1:${address.port}`, token};
   try {
-    fs.mkdirSync(path.dirname(sessionFile), {recursive: true});
-    fs.writeFileSync(sessionFile, JSON.stringify(session), {mode: 0o600});
+    writeSessionFile(sessionFile, session);
   } catch (error) {
     await new Promise<void>(resolve => {
       server.close(() => resolve());
@@ -101,8 +99,15 @@ export async function startServer(store: EventStore, sessionFile: string, port =
     server,
     session,
     close: () =>
-      new Promise<void>(resolve => {
-        server.close(() => resolve());
+      new Promise<void>((resolve, reject) => {
+        server.close(() => {
+          try {
+            removeSessionFileIfOwned(sessionFile, token);
+            resolve();
+          } catch (err) {
+            reject(err);
+          }
+        });
         server.closeAllConnections();
       }),
   };

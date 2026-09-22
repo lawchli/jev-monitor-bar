@@ -27,7 +27,10 @@ export class EventStore extends EventEmitter {
   }
   private files(){return fs.readdirSync(this.directory).filter(f=>/^events-\d{8}\.jsonl$/.test(f)).sort();}
   private file(){return path.join(this.directory,`events-${String(this.segment).padStart(8,'0')}.jsonl`);}
-  private pruneFiles(){const files=this.files();for(const f of files.slice(0,Math.max(0,files.length-this.maxSegments)))fs.unlinkSync(path.join(this.directory,f));}
+  private pruneFiles(){const files=this.files();for(const f of files.slice(0,Math.max(0,files.length-this.maxSegments))){
+    // Windows antivirus/indexers can briefly lock old segments; the event is already on disk, so retry on a later prune.
+    try{fs.unlinkSync(path.join(this.directory,f));}catch{}
+  }}
   private seq(e:MonitorEvent){return JSON.stringify([e.run_id,e.producer_id,e.sequence]);}
   private remember(e:StoredEvent){
     if(this.ids.has(e.event_id)||this.sequences.has(this.seq(e)))return;

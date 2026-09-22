@@ -34,6 +34,16 @@ test('dedupes by event_id and reports reused producer sequences as conflicts',()
   assert.deepEqual(store.ingest({...first,event_id:'restarted-sender'}),{accepted:false,conflict:true,cursor:1});
 });
 
+test('a locked old segment does not fail ingestion',t=>{
+  const store=new EventStore(tempDir(),undefined,200,1);
+  const unlink=t.mock.method(fs,'unlinkSync',()=>{throw Object.assign(new Error('locked'),{code:'EPERM'});});
+  for(let i=0;i<5;i++)assert.equal(store.ingest(ev('heartbeat')).accepted,true);
+  assert.ok(unlink.mock.callCount()>0);
+  unlink.mock.restore();
+  store.ingest(ev('heartbeat'));
+  assert.equal(fs.readdirSync(store.directory).length,1);
+});
+
 test('candidate names that look sensitive survive sanitizing and restart',()=>{
   const dir=tempDir();
   const store=new EventStore(dir);

@@ -142,3 +142,18 @@
   - status 与 snapshot 的错误分开记录，各自在对应请求成功后清除。`runId` 变化后，已停止的请求不再写入错误。
 - 验证：Linux（Node 22.14.0、pnpm 11.19.0、Electron 42.11.6、`DISPLAY=:1`）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（27 项）、`pnpm build` 通过。Playwright 打开窗口：正常目录下标题为 JEV Monitor Bar，`window.monitor` 恰好 6 个方法，`status.url` 为 `http://127.0.0.1:<port>`，没有红色错误；把 `events` 做成文件后，窗口显示同一条 `EEXIST` `storageError`，snapshot 仍是空的且未在监听。Windows / macOS 窗口未验证。
 - 遗留：窗口位置记忆、正式 UI、托盘未做。Linux 窗口管理器尺寸和默认菜单同上一则 P1-01。C6–C12 未处理。README 未改。
+
+## P1-06 — 展开模式：决策详情、执行与时间线
+
+- 日期：2026-09-22
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：
+  - `src/renderer/expanded/model.ts` 提供 `runSummary`、`decisionCards`、`decisionChain`、`attemptGroups`、`timelineItems`。决策卡按时间倒序，最多 50 张。Choice 未完成时概率为「未知」、标题为「正在评估候选」；完成后按概率从高到低排列。Score 在 legend 刻度上标位置，有概率则附上。Noul 只显示「是」的概率，不显示 confidence。confidence 仅在有值且不是 Noul 时写成「分布集中度 0.62（不是正确率）」。
+  - 决策链省略缺失环节。规则覆盖为 `JEV 选择 A → 规则覆盖为 B（规则 X · 来源 Y） → 实际执行 B → 验证：失败`。不带 `decision_id` 且 `source` 为 rule 的 `action.selected` 单独成卡，徽标「规则决策」，链里不出现 JEV。
+  - 执行页按 `action_id` 分组，组内按时间编号「第 N 次」，并表格展示验证 checks。摘要里的验证计数写明分母，并同时写出失败与未知：`验证成功 2 / 已验证 3；验证失败 1；未知 0；未验证 1`。进度规则与 P1-05 相同，阶段单独显示。
+  - 时间线默认跟随最新，向上滚动后暂停并显示「已暂停跟随 · N 条新事件 · 回到最新」；暂停不停止接收。最多渲染 500 条。「加载更早」调用 `bridge.page({runId, beforeCursor, limit: 100})`。筛选「仅错误与重试」包含 `*.failed`、验证结果 failed、`telemetry.dropped`，以及同一动作的第二次及以后 attempt。发生时间与接收时间相差超过 5 秒标「迟到」。点击后用 `<pre>` 纯文本显示 `JSON.stringify(event, null, 2)`。概率条宽度用 React `style`，不插入 `<style>`。
+  - 未改 `App.tsx`、`common.ts`。有 `storageError` 时展开视图用红色行显示。
+- 验证：Linux（Node 22.14.0、pnpm 11.19.0、Electron 42.11.6、`DISPLAY=:1`；`XDG_SESSION_TYPE` 与 `WAYLAND_DISPLAY` 均为空，按 X11）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（30 项，含边界测试）、`pnpm build` 通过。Playwright 启动 Electron，POST 模拟事件后切到展开模式。决策页 DOM 中选中项为「A 已选」，概率更高的 B 未标已选；时间线只有 1 个「迟到」。向上滚动后按钮为「已暂停跟随 · 0 条新事件 · 回到最新」，再 POST 一条 heartbeat 后变为「已暂停跟随 · 1 条新事件 · 回到最新」。内存窗口已含全部事件时「加载更早」变为「没有更早的事件」。截图：决策页 `/cursor/stores/bc-01a0ca4b-ddb2-7f09-8eb1-b447ce56da3c/media/p1-06-expanded-view.png`，执行页 `media/p1-06-tab-execution.png`，时间线 `media/p1-06-tab-timeline.png`。Windows / macOS 窗口未验证。
+- 遗留：连接状态（在线 / 可能断开）只在紧凑模式规格里，展开摘要未重复，需要协调是否补上。计划示例的决策链在全角右括号和箭头之间没有空格（`）→`），实现在每个箭头两侧都留了空格（`） →`）。验证摘要比示例多写了「验证失败」和「未知」，避免失败被藏进分母。Score / Noul 的链分别是「JEV 评分」「JEV 判断 是 xx%」，示例只写了 Choice 的「JEV 选择」。`source: application` 不另造覆盖文案，只保留「实际执行」。README 未改。三平台 CI 见本 PR。

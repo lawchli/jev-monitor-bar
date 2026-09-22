@@ -2,8 +2,17 @@ import type {ViewProps} from '../types';
 import {compactModel} from './model';
 import './compact.css';
 
-export function CompactView({snapshot, status, now, pinned, onTogglePinned, onSetMode, onSelectRun}: ViewProps) {
-  const model = compactModel(snapshot, status, now);
+export function CompactView({
+  snapshot,
+  status,
+  now,
+  selectedRunId,
+  pinned,
+  onTogglePinned,
+  onSetMode,
+  onSelectRun,
+}: ViewProps) {
+  const model = compactModel(snapshot, status, now, selectedRunId);
   const meta = `${model.phase} · ${model.progress} · ${model.duration}`;
   const eventLine = `${model.eventTime} ${model.eventType}`;
   const notes = model.notes.join('；');

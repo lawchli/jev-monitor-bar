@@ -151,6 +151,27 @@ function followingRunId(snapshot: Snapshot | undefined, currentId: string | unde
   return next && next.id !== currentId ? next.id : undefined;
 }
 
+function loadingModel(
+  status: ReceiverStatus | undefined,
+  snapshot: Snapshot | undefined,
+  selectedRunId: string,
+): CompactModel {
+  const model = emptyModel(status);
+  const others = (snapshot?.runs ?? []).filter(item => item.id !== selectedRunId && !item.ended_at);
+  return {
+    ...model,
+    hasRun: true,
+    name: '正在读取',
+    nameFull: '正在读取',
+    runStatus: '正在读取',
+    connectionText: UNKNOWN,
+    connectionKind: 'none',
+    connectionTone: 'neutral',
+    otherRunning: others.length,
+    nextRunId: others.length > 0 ? followingRunId(snapshot, selectedRunId) : undefined,
+  };
+}
+
 function emptyModel(status: ReceiverStatus | undefined): CompactModel {
   const receiver = receiverText(status);
   return {
@@ -187,18 +208,22 @@ export function compactModel(
   snapshot: Snapshot | undefined,
   status: ReceiverStatus | undefined,
   now: number,
+  selectedRunId?: string,
 ): CompactModel {
-  const full = snapshot?.run;
-  const run = full ?? pickDefaultRun(snapshot?.runs ?? []);
-  if (!run) return emptyModel(status);
+  const loaded = snapshot?.run;
+  const full = loaded && (selectedRunId === undefined || loaded.id === selectedRunId) ? loaded : undefined;
+  const summary = selectedRunId ? snapshot?.runs.find(item => item.id === selectedRunId) : undefined;
+  const run = full ?? summary ?? (selectedRunId === undefined ? pickDefaultRun(snapshot?.runs ?? []) : undefined);
+  if (!run) return selectedRunId ? loadingModel(status, snapshot, selectedRunId) : emptyModel(status);
 
   const connection = connectionState(run, now);
   const decision = full ? latestDecision(full) : undefined;
   const attempt = full ? latestAttempt(full) : undefined;
   const action = attempt?.selected?.payload.action;
   const actionSource = sourceLabels[attempt?.selected?.payload.source ?? ''] ?? '';
-  const choice = decision?.status === 'selected' ? decision.payload.choice : undefined;
-  const overridden = Boolean(action && choice !== undefined && action !== choice);
+  const linked = attempt?.decision_id ? full?.decisions[attempt.decision_id] : undefined;
+  const linkedChoice = linked?.payload.kind === 'choice' ? linked.payload.choice : undefined;
+  const overridden = Boolean(action && linkedChoice !== undefined && action !== linkedChoice);
   const actionParts: string[] = [];
   if (action) {
     actionParts.push(action);

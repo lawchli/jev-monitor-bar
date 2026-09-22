@@ -318,3 +318,94 @@ test('compact model passes through platform notes and storage errors', () => {
   assert.equal(model.storageError, '磁盘已满');
   assert.deepEqual(compactModel(store.snapshot('run-1'), status(), Date.now()).notes, []);
 });
+
+test('compact model stays on the selected run while its detail is hidden', () => {
+  const store = new EventStore(tempDir());
+  const older = events('run-a');
+  const selected = events('run-b');
+  ingest(store, [
+    older('run.started', {}, {name: '甲任务'}, 0),
+    older('decision.resolved', decision('d1'), {kind: 'choice', choice: '甲选项'}),
+    selected('run.started', {}, {name: '乙任务'}, 0),
+    selected('progress.updated', {}, {phase: '等待', completed: 1, total: 3}),
+  ]);
+  const hidden = store.snapshot('run-a');
+  hidden.run = undefined;
+  hidden.events = [];
+  const model = compactModel(hidden, status(), Date.now(), 'run-b');
+  assert.equal(model.name, '乙任务');
+  assert.equal(model.phase, '等待');
+  assert.equal(model.progress, '1/3');
+  assert.equal(model.choice, '未知');
+  assert.equal(model.actionText, '未知');
+  assert.equal(model.otherRunning, 1);
+  assert.equal(model.nextRunId, 'run-a');
+  assert.notEqual(model.name, '甲任务');
+
+  const missing = compactModel(hidden, status(), Date.now(), 'run-missing');
+  assert.equal(missing.hasRun, true);
+  assert.equal(missing.name, '正在读取');
+  assert.equal(missing.runStatus, '正在读取');
+  assert.equal(missing.choice, '未知');
+  assert.notEqual(missing.name, '甲任务');
+  assert.notEqual(missing.name, '乙任务');
+});
+
+test('compact model marks an override from the linked decision, not the latest one', () => {
+  const store = new EventStore(tempDir());
+  const ev = events('run-link');
+  ingest(store, [
+    ev('run.started', {}, {name: '关联'}, 0),
+    ev('decision.resolved', decision('d-old'), {kind: 'choice', choice: '留下'}),
+    ev('action.selected', attempt('t1', 'd-old'), {
+      action: '改写',
+      source: 'rule',
+      rule: 'prefer-rewrite',
+      rule_source: 'policy',
+    }),
+    ev('decision.resolved', decision('d-new'), {kind: 'choice', choice: '改写'}),
+  ]);
+  const overridden = compactModel(store.snapshot('run-link'), status(), Date.now(), 'run-link');
+  assert.equal(overridden.choice, '改写');
+  assert.equal(overridden.overridden, true);
+  assert.equal(overridden.actionText, '改写 · 规则 · 已覆盖');
+
+  const same = events('run-same');
+  ingest(store, [
+    same('run.started', {}, {name: '一致'}, 0),
+    same('decision.resolved', decision('d-old'), {kind: 'choice', choice: '留下'}),
+    same('action.selected', attempt('t1', 'd-old'), {
+      action: '留下',
+      source: 'rule',
+      rule: 'keep',
+      rule_source: 'policy',
+    }),
+    same('decision.resolved', decision('d-new'), {kind: 'choice', choice: '改写'}),
+  ]);
+  const confirmed = compactModel(store.snapshot('run-same'), status(), Date.now(), 'run-same');
+  assert.equal(confirmed.choice, '改写');
+  assert.equal(confirmed.overridden, false);
+  assert.equal(confirmed.actionText, '留下 · 规则');
+
+  const scored = events('run-score-link');
+  ingest(store, [
+    scored('run.started', {}, {name: '分数'}, 0),
+    scored('decision.resolved', decision('d1'), {kind: 'score', score: 1, legend: {'0': '低', '1': '高'}}),
+    scored('action.selected', attempt('t1', 'd1'), {action: '继续', source: 'model'}),
+  ]);
+  const scoreModel = compactModel(store.snapshot('run-score-link'), status(), Date.now(), 'run-score-link');
+  assert.equal(scoreModel.choice, '1 高');
+  assert.equal(scoreModel.overridden, false);
+  assert.equal(scoreModel.actionText, '继续 · 模型');
+
+  const loose = events('run-loose');
+  ingest(store, [
+    loose('run.started', {}, {name: '无关联'}, 0),
+    loose('decision.resolved', decision('d1'), {kind: 'choice', choice: '留下'}),
+    loose('action.selected', {action_id: 'act1', attempt_id: 't1'}, {action: '改写', source: 'application'}),
+  ]);
+  const unlinked = compactModel(store.snapshot('run-loose'), status(), Date.now(), 'run-loose');
+  assert.equal(unlinked.choice, '留下');
+  assert.equal(unlinked.overridden, false);
+  assert.equal(unlinked.actionText, '改写 · 应用');
+});

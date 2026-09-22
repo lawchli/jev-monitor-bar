@@ -55,7 +55,10 @@ if (!app.requestSingleInstanceLock()) {
     session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
       callback(false);
     });
-    const created = createMonitorWindow({preload: path.join(__dirname, 'preload.cjs')});
+    const created = createMonitorWindow({
+      preload: path.join(__dirname, 'preload.cjs'),
+      stateFile: paths.windowStateFile,
+    });
     win = created.win;
     const controller: MonitorWindowController = created.controller;
     const getStatus = (): ReceiverStatus => ({

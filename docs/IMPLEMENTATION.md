@@ -142,3 +142,17 @@
   - status 与 snapshot 的错误分开记录，各自在对应请求成功后清除。`runId` 变化后，已停止的请求不再写入错误。
 - 验证：Linux（Node 22.14.0、pnpm 11.19.0、Electron 42.11.6、`DISPLAY=:1`）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（27 项）、`pnpm build` 通过。Playwright 打开窗口：正常目录下标题为 JEV Monitor Bar，`window.monitor` 恰好 6 个方法，`status.url` 为 `http://127.0.0.1:<port>`，没有红色错误；把 `events` 做成文件后，窗口显示同一条 `EEXIST` `storageError`，snapshot 仍是空的且未在监听。Windows / macOS 窗口未验证。
 - 遗留：窗口位置记忆、正式 UI、托盘未做。Linux 窗口管理器尺寸和默认菜单同上一则 P1-01。C6–C12 未处理。README 未改。
+
+## P1-04 — 桌面壳与平台模块（窗口行为、位置记忆、多显示器）
+
+- 日期：2026-09-22
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：
+  - `platformProfile` 返回 `{alwaysOnTopLevel:'floating', showInactive:true}`。macOS 的 `visibleOnAllWorkspaces` 与 `visibleOnFullScreen` 为 true，Windows、Linux X11、Linux Wayland 和其他平台为 false。各分支注释写明平台和验证状态。
+  - `window-state.ts` 不导入 Electron。`loadWindowState` 在文件缺失、JSON 损坏、版本不是 1 或形状不对时返回 `undefined`。`saveWindowState` 先写 `<file>.<pid>.<hex>.tmp`（mode 0600），再 `renameSync`；`EPERM` / `EBUSY` / `EACCES` 重试 5 次，第 n 次前用 `Atomics.wait` 等 20×n ms，仍失败则删掉临时文件并抛错，成功后 `chmodSync(file, 0o600)`。`fitToDisplays` 看窗口顶部 32px 条带：与某个 workArea 横向重叠至少 64px 且纵向相交时保留坐标，并把宽高截到该 workArea 内（重叠更大的显示器优先）；否则在主显示器 workArea 里居中，主显示器不在列表中时用第一块屏。坐标保持 DIP，不乘 `scaleFactor`。`switchMode` 只改当前模式的 bounds。
+  - 窗口默认紧凑 400×132（最小 360×96）、展开 440×640（最小 360×320）。启动读保存的状态，两种模式都经 `fitToDisplays` 校正。安全设置与 P1-01 相同；`ready-to-show` 时 `showInactive()`。置顶时 `setAlwaysOnTop(true, 'floating')`；仅当 profile 要求时再 `setVisibleOnAllWorkspaces(true, {visibleOnFullScreen:true})`。Wayland 仍走同一调用，限制说明留在 `detectPlatform` 的 notes。`move` / `resize` 防抖 500ms 后写入两种模式各自的 bounds，以及 `screen.getDisplayMatching` 的 id 和缩放。`setMode` 先记下当前模式的 bounds，再套用另一模式并设置对应最小尺寸。`display-removed` 与 `display-metrics-changed` 时重新 fit 并移动。页面仍由 `loadMonitorWindow` 在 `registerIpc({contents})` 之后加载。
+  - `index.ts` 只把 `paths.windowStateFile` 传给 `createMonitorWindow`。
+- 验证：Linux VM（Ubuntu 24.04.4，内核 6.12.94+，XFCE / xfwm4，`DISPLAY=:1`，1920×1200，Electron 报告 `scaleFactor` 0.984375，Node 22.14.0，pnpm 11.19.0，Electron 42.11.6）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（43 项）、`pnpm build` 通过。启动后活动窗口仍是 Desktop，窗口带 `_NET_WM_STATE_ABOVE`。拖到约 (182,243) 并缩到约 469×184 后，`window-state.json` 记下紧凑 bounds，展开 bounds 仍是 440×640。`setMode('expanded')`、取消置顶再置顶、再回到紧凑后，两边 bounds 都没有被对方盖掉，`status.platform.os` 为 `linux-x11`。退出再打开，JSON 与退出前完全一致，活动窗口仍是 Desktop，置顶原子仍在。另开一个 `xmessage` 并让它获得焦点后，小窗仍画在它上面；展开后标题下可见「展开视图（待实现）」。Windows / macOS 窗口未验证。Wayland 未实机验证。
+- 遗留：本机 `setBounds(getBounds())` 会按约 `1/scaleFactor` 把窗口放大，所以 show 之后 250ms 以及本进程自己的 `setBounds` 引起的几何事件不写入文件，保存的是请求的 DIP 矩形；用户拖动仍写入当时的 `getBounds`。因此视觉像素和文件里的 DIP 差几个像素，但重启不会越变越大。取消置顶时若 profile 打开了所有工作区，会再调用 `setVisibleOnAllWorkspaces(false)`。关闭窗口时会立刻把尚未防抖落盘的状态写完。没有历史文件时，两种模式都先放到屏幕外再居中，避免默认 (0,0) 被当成已经落在主屏上。README 未改。Windows、macOS 窗口未验证。

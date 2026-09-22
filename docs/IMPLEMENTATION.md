@@ -161,3 +161,17 @@
   - Linux VM（`DISPLAY=:1`、Electron 42.11.6、X11）上 `pnpm start` 后运行 `JEV_MONITOR_HOME=.runtime/dev python3 python/examples/fake_host.py`。窗口从「运行数 0 / 最新事件 无 / 监听 是」变为「运行数 4 / 最新事件 run.failed / 监听 是」。
   - 本机没有 Python 3.9。Windows / macOS 未在本机执行，见本 PR 的 GitHub Actions。
 - 遗留：根 README 未改（留给 P1-10）。规格没写明的 HTTP 状态码按连接失败重试，见 PR「需要协调」。Python 3.9 在 `macos-latest` 上能否装上，以 CI 为准。
+
+## P1-07 — 会话 URL 只允许 127.0.0.1
+
+- 日期：2026-09-22
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：
+  - rebase 到 `c5a3a18`。实施记录保留 P1-01 的窗口生命周期更正和上一则 P1-07。
+  - 会话 `url` 必须是 `http://127.0.0.1` 或带合法端口的同一主机，路径只能为空或 `/`。带用户名、查询串、片段、其他路径、`localhost`、IPv6 或其他主机都视为离线，不发请求。上一则里「忽略代理」仍保留，作为额外限制。
+  - `queue_size` 必须是大于等于 1 的整数，`timeout` 和 `heartbeat_interval` 必须大于 0，否则构造时抛出 `ValueError`。不再把非正队列静默变成全部丢弃。
+  - 成功入队后被 409 或 400/413 拒绝的事件也计入下一条 `telemetry.dropped`。参数不合法、没有入队的调用仍然只计入 `stats().dropped`。`telemetry.dropped` 自己被拒绝时不再排下一条，避免死循环。
+- 验证：Linux（Python 3.12.3）上 `python -m unittest discover -s python/tests -v` 16 项通过。Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（27 项）、`pnpm build` 通过。Windows / macOS 见本提交之后的 GitHub Actions。
+- 遗留：根 README 仍留给 P1-10。`python/README.md` 写了参数范围和 URL 限制。序号可以先于积压事件到达这一点，审计认为接收端可以接受，本切片没有改。

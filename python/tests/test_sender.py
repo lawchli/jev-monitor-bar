@@ -10,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from jev_monitor.sender import MonitorSender
+from jev_monitor.sender import MonitorSender, _loopback_origin
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -24,11 +24,23 @@ class Handler(BaseHTTPRequestHandler):
         if release is not None:
             release.wait(timeout=3)
         auth = self.headers.get('Authorization', '')
+        try:
+            event = json.loads(raw.decode('utf-8'))
+        except (ValueError, UnicodeError):
+            event = None
         with server.lock:
             server.posts += 1
+            server.attempts.append(event)
             token_ok = auth == 'Bearer ' + server.token
+            fail = server.fail_left > 0
+            if fail:
+                server.fail_left -= 1
+                fail_code = server.fail_code
         if not token_ok:
             self._send(401, b'{"error":"unauthorized"}')
+            return
+        if fail:
+            self._send(fail_code, b'{}')
             return
         if server.mode == 'conflict':
             self._send(409, b'{"accepted":false,"conflict":true}')
@@ -36,10 +48,6 @@ class Handler(BaseHTTPRequestHandler):
         if server.mode == 'reject':
             self._send(400, b'{"error":"bad"}')
             return
-        try:
-            event = json.loads(raw.decode('utf-8'))
-        except (ValueError, UnicodeError):
-            event = None
         with server.lock:
             server.events.append(event)
         accepted = b'{"accepted":false}' if event and event.get('_dup') else b'{"accepted":true}'
@@ -63,10 +71,13 @@ class RecordingServer(ThreadingHTTPServer):
     def __init__(self):
         super().__init__(('127.0.0.1', 0), Handler)
         self.events = []
+        self.attempts = []
         self.lock = threading.Lock()
         self.token = 'token'
         self.mode = 'ok'
         self.posts = 0
+        self.fail_code = 400
+        self.fail_left = 0
         self.release = None
         self._thread = threading.Thread(target=self.serve_forever, name='jev-fake-receiver', daemon=True)
         self._thread.start()
@@ -79,6 +90,10 @@ class RecordingServer(ThreadingHTTPServer):
         with self.lock:
             return list(self.events)
 
+    def attempt_snapshot(self):
+        with self.lock:
+            return list(self.attempts)
+
     def stop(self):
         if self.release is not None:
             self.release.set()
@@ -88,11 +103,15 @@ class RecordingServer(ThreadingHTTPServer):
 
 
 def write_session(path, port, token):
+    write_session_url(path, f'http://127.0.0.1:{port}', token)
+
+
+def write_session_url(path, url, token):
     parent = os.path.dirname(path)
     if parent:
         os.makedirs(parent, exist_ok=True)
     with open(path, 'w', encoding='utf-8') as handle:
-        json.dump({'url': f'http://127.0.0.1:{port}', 'token': token}, handle)
+        json.dump({'url': url, 'token': token}, handle)
         handle.write('\n')
 
 
@@ -181,14 +200,120 @@ class SenderTest(unittest.TestCase):
         server.mode = 'conflict'
         self.sender = MonitorSender(session_file=self.session_path, heartbeat_interval=60)
         self.assertTrue(self.sender.emit('heartbeat'))
-        self.assertTrue(wait_until(lambda: self.sender.stats()['conflicts'] == 1, timeout=4))
+        self.assertTrue(wait_until(lambda: server.posts >= 2, timeout=4))
         time.sleep(0.6)
         stats = self.sender.stats()
-        self.assertEqual(stats['conflicts'], 1)
-        self.assertEqual(stats['dropped'], 1)
+        attempts = server.attempt_snapshot()
+        self.assertEqual([item['type'] for item in attempts], ['heartbeat', 'telemetry.dropped'])
+        self.assertEqual(attempts[1]['payload']['count'], 1)
+        self.assertEqual(sum(item['type'] == 'heartbeat' for item in attempts), 1)
+        self.assertEqual(stats['conflicts'], 2)
+        self.assertEqual(stats['dropped'], 2)
         self.assertEqual(stats['sent'], 0)
-        self.assertEqual(server.posts, 1)
+        self.assertEqual(server.posts, 2)
         self.assertEqual(server.snapshot(), [])
+
+    def test_terminal_reject_is_reported_before_later_events(self):
+        server = self._start_server()
+        server.fail_code = 409
+        server.fail_left = 1
+        self.sender = MonitorSender(session_file=self.session_path, heartbeat_interval=60)
+        self.assertTrue(self.sender.emit('progress.updated', {'summary': 'lost'}))
+        self.assertTrue(self.sender.emit('progress.updated', {'summary': 'kept'}))
+        self.assertTrue(wait_until(lambda: len(server.snapshot()) >= 2, timeout=4))
+        events = server.snapshot()
+        self.assertEqual(events[0]['type'], 'telemetry.dropped')
+        self.assertEqual(events[0]['payload']['count'], 1)
+        self.assertEqual(events[1]['payload']['summary'], 'kept')
+        self.assertTrue(all(event['payload'].get('summary') != 'lost' for event in events))
+        self.assertEqual(self.sender.stats()['conflicts'], 1)
+        self.assertEqual(self.sender.stats()['rejected'], 0)
+
+        self.sender.close(timeout=1)
+        self.sender = None
+        server.fail_code = 400
+        server.fail_left = 1
+        self.sender = MonitorSender(session_file=self.session_path, heartbeat_interval=60)
+        self.assertTrue(self.sender.emit('progress.updated', {'summary': 'bad'}))
+        self.assertTrue(wait_until(lambda: any(event['type'] == 'telemetry.dropped' for event in server.snapshot()[len(events):]), timeout=4))
+        later = server.snapshot()[len(events):]
+        self.assertEqual(later[0]['type'], 'telemetry.dropped')
+        self.assertEqual(later[0]['payload']['count'], 1)
+        self.assertEqual(self.sender.stats()['rejected'], 1)
+
+    def test_invalid_emit_is_not_a_telemetry_drop(self):
+        server = RecordingServer()
+        self.server = server
+        self.sender = MonitorSender(session_file=self.session_path, heartbeat_interval=60)
+        self.assertFalse(self.sender.emit('not.a.type'))
+        write_session(self.session_path, server.port, server.token)
+        time.sleep(0.6)
+        self.assertEqual(server.posts, 0)
+        self.assertEqual(self.sender.stats()['dropped'], 1)
+
+    def test_loopback_origin_rejects_non_local_urls(self):
+        self.assertEqual(_loopback_origin('http://127.0.0.1:9'), 'http://127.0.0.1:9')
+        self.assertEqual(_loopback_origin('http://127.0.0.1:9/'), 'http://127.0.0.1:9')
+        self.assertEqual(_loopback_origin('http://127.0.0.1'), 'http://127.0.0.1')
+        for url in (
+            'http://evil.example/events',
+            'http://localhost:9',
+            'https://127.0.0.1:9',
+            'http://user:secret@127.0.0.1:9',
+            'http://127.0.0.1:9@evil.example/',
+            'http://127.0.0.1:9/events',
+            'http://127.0.0.1:9?x=1',
+            'http://127.0.0.1:9#frag',
+            'http://127.0.0.1:99999',
+            'http://[::1]:9',
+            'http://127.0.0.1:0',
+        ):
+            self.assertIsNone(_loopback_origin(url), url)
+
+    def test_session_url_must_be_http_loopback(self):
+        server = RecordingServer()
+        self.server = server
+        port = server.port
+        rejected = [
+            'http://evil.example/events',
+            f'http://localhost:{port}',
+            f'https://127.0.0.1:{port}',
+            f'http://user:secret@127.0.0.1:{port}',
+            f'http://127.0.0.1:{port}@evil.example/',
+            f'http://127.0.0.1:{port}/events',
+            f'http://127.0.0.1:{port}?x=1',
+            f'http://127.0.0.1:{port}#frag',
+            'http://127.0.0.1:99999',
+            f'http://[::1]:{port}',
+        ]
+        write_session_url(self.session_path, rejected[0], server.token)
+        self.sender = MonitorSender(session_file=self.session_path, heartbeat_interval=60)
+        self.assertTrue(self.sender.emit('heartbeat'))
+        time.sleep(0.25)
+        self.assertEqual(server.posts, 0)
+        self.assertTrue(self.sender.stats()['offline'])
+        for url in rejected[1:]:
+            time.sleep(0.02)
+            write_session_url(self.session_path, url, server.token)
+        time.sleep(0.4)
+        self.assertEqual(server.posts, 0)
+        write_session_url(self.session_path, f'http://127.0.0.1:{port}/', server.token)
+        self.assertTrue(wait_until(lambda: len(server.snapshot()) == 1, timeout=6))
+        self.assertEqual(server.snapshot()[0]['type'], 'heartbeat')
+        self.assertEqual(server.posts, 1)
+
+    def test_non_positive_limits_raise(self):
+        for kwargs in (
+            {'queue_size': 0},
+            {'queue_size': -3},
+            {'queue_size': True},
+            {'timeout': 0},
+            {'timeout': -0.1},
+            {'heartbeat_interval': 0},
+            {'heartbeat_interval': -1},
+        ):
+            with self.assertRaises(ValueError):
+                MonitorSender(enabled=False, session_file=self.session_path, **kwargs)
 
     def test_recovery_sends_telemetry_dropped_first(self):
         server = RecordingServer()

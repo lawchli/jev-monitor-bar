@@ -15,7 +15,15 @@ with MonitorSender(host_name="my-host") as sender:
     sender.run_completed()
 ```
 
-接收端还没起来时事件留在队列里（队列满了就丢）。恢复连接后会先补发一条 `telemetry.dropped`，说明这段时间丢掉了多少条。
+接收端还没起来时事件留在队列里（队列满了就丢）。下次能送达时，会先补发一条 `telemetry.dropped`。`count` 是上次报告以来没能留下的事件：队列满丢掉的，以及已经交给接收端但被 409 或 400/413 拒绝的。调用参数不合法（未知类型、缺少必填 ID）只计入 `stats()['dropped']`，不进这条遥测。
+
+## 参数
+
+- `queue_size`：整数，至少为 1。小于 1 会抛出 `ValueError`。不要发送时用 `enabled=False`。
+- `timeout`：秒，必须大于 0。
+- `heartbeat_interval`：秒，必须大于 0。
+
+会话文件里的 `url` 只能是 `http://127.0.0.1` 或 `http://127.0.0.1:<端口>`（路径最多一个 `/`）。不能带用户名、查询串或片段。`localhost`、其他地址和其他 scheme 都当成离线，不会发出请求，也不会把 token 送出本机。
 
 ## 测试
 

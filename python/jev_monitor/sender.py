@@ -11,6 +11,7 @@ import secrets
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from datetime import datetime, timezone
@@ -87,6 +88,35 @@ def _omit_none(payload: dict) -> dict:
     return {key: value for key, value in payload.items() if value is not None}
 
 
+def _loopback_origin(url: str) -> Optional[str]:
+    """Accept only `http://127.0.0.1` with an optional port and no extra parts.
+
+    `localhost`, other addresses, userinfo, a query, a fragment, and any path
+    other than `/` are rejected so a session file cannot send the bearer token
+    off the machine.
+    """
+    try:
+        parts = urllib.parse.urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return None
+    if parts.scheme != 'http':
+        return None
+    if parts.username is not None or parts.password is not None:
+        return None
+    if parts.query or parts.fragment:
+        return None
+    if parts.hostname != '127.0.0.1':
+        return None
+    if port is not None and not 1 <= port <= 65535:
+        return None
+    if parts.path not in ('', '/'):
+        return None
+    if port is None:
+        return 'http://127.0.0.1'
+    return f'http://127.0.0.1:{port}'
+
+
 def _read_session(path: str) -> Optional[dict]:
     try:
         with open(path, 'r', encoding='utf-8') as handle:
@@ -99,7 +129,21 @@ def _read_session(path: str) -> Optional[dict]:
     token = data.get('token')
     if not isinstance(url, str) or not isinstance(token, str) or not url or not token:
         return None
-    return {'url': url, 'token': token}
+    origin = _loopback_origin(url)
+    if origin is None:
+        logging.getLogger('jev_monitor').warning('ignoring session file; url must be http://127.0.0.1[:port]')
+        return None
+    return {'url': origin, 'token': token}
+
+
+def _require_queue_size(queue_size: int) -> None:
+    if isinstance(queue_size, bool) or not isinstance(queue_size, int) or queue_size < 1:
+        raise ValueError('queue_size must be an integer >= 1')
+
+
+def _require_positive(name: str, value: float) -> None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        raise ValueError(f'{name} must be > 0')
 
 
 class MonitorSender:
@@ -120,14 +164,16 @@ class MonitorSender:
         heartbeat_interval: float = 5.0,
         enabled: bool = True,
     ) -> None:
+        _require_queue_size(queue_size)
+        _require_positive('timeout', timeout)
+        _require_positive('heartbeat_interval', heartbeat_interval)
         self.enabled = enabled
         self.run_id = run_id if run_id else _default_run_id()
         self.producer_id = _producer_id(host_name if host_name is not None else '')
         self.session_file = session_file if session_file is not None else resolve_paths()['session_file']
         self.timeout = timeout
         self.heartbeat_interval = heartbeat_interval
-        self._queue_size = queue_size
-        self._queue: queue.Queue = queue.Queue(maxsize=queue_size if queue_size > 0 else 1)
+        self._queue: queue.Queue = queue.Queue(maxsize=queue_size)
         self._closed = False
         self._stop = threading.Event()
         self._wake = threading.Event()
@@ -141,7 +187,7 @@ class MonitorSender:
         self._session_mtime = object()
         self._session: Optional[dict] = None
         self._logger = logging.getLogger('jev_monitor')
-        # Ignore HTTP(S)_PROXY so a session URL cannot be redirected off-box.
+        # Proxy bypass is extra defense. The session URL is also limited to 127.0.0.1.
         self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         self._thread: Optional[threading.Thread] = None
         if enabled:
@@ -394,12 +440,10 @@ class MonitorSender:
         }
         event.update(clean_ids)
         with self._lock:
-            if self._closed or self._queue_size <= 0:
+            if self._closed:
                 self._stats['dropped'] += 1
-                if self._queue_size <= 0:
-                    self._unreported += 1
                 queued = False
-                overflow = self._queue_size <= 0
+                overflow = False
             else:
                 self._sequence += 1
                 event['sequence'] = self._sequence
@@ -472,21 +516,14 @@ class MonitorSender:
                 else:
                     pending = None
                 continue
-            if status == 409:
-                self._mark(conflicts=1, dropped=1)
-                self._logger.warning('conflict type=%s sequence=%s', event.get('type'), event.get('sequence'))
-                self._set_offline(False)
-                self._backoff = _BACKOFF_START
-                if kind == 'telemetry':
-                    telemetry = None
+            if status == 409 or status in TERMINAL_REJECT:
+                # A rejected telemetry report must not schedule another one, or a
+                # receiver that always returns 409/400 would loop.
+                self._mark_terminal(conflict=status == 409, report=kind != 'telemetry')
+                if status == 409:
+                    self._logger.warning('conflict type=%s sequence=%s', event.get('type'), event.get('sequence'))
                 else:
-                    pending = None
-                if event.get('type') == 'heartbeat':
-                    self._last_sent = time.monotonic()
-                continue
-            if status in TERMINAL_REJECT:
-                self._mark(rejected=1, dropped=1)
-                self._logger.warning('rejected status=%s type=%s', status, event.get('type'))
+                    self._logger.warning('rejected status=%s type=%s', status, event.get('type'))
                 self._set_offline(False)
                 self._backoff = _BACKOFF_START
                 if kind == 'telemetry':
@@ -554,7 +591,7 @@ class MonitorSender:
     def _post(self, session: dict, event: dict):
         body = json.dumps(event, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
         request = urllib.request.Request(
-            session['url'].rstrip('/') + '/events',
+            session['url'] + '/events',
             data=body,
             method='POST',
             headers={
@@ -579,6 +616,13 @@ class MonitorSender:
         with self._lock:
             for key, value in delta.items():
                 self._stats[key] += value
+
+    def _mark_terminal(self, *, conflict: bool, report: bool) -> None:
+        with self._lock:
+            self._stats['dropped'] += 1
+            self._stats['conflicts' if conflict else 'rejected'] += 1
+            if report:
+                self._unreported += 1
 
     def _set_offline(self, offline: bool) -> None:
         with self._lock:

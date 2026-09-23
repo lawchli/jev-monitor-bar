@@ -1,0 +1,7 @@
+{"schema_version":1,"event_id":"reconnect-1","run_id":"run-reconnect","producer_id":"sim-reconnect","sequence":1,"occurred_at":"2026-01-01T00:00:00.000Z","type":"run.started","payload":{"name":"模拟：断线恢复","simulated":true}}
+{"schema_version":1,"event_id":"reconnect-2","run_id":"run-reconnect","producer_id":"sim-reconnect","sequence":2,"occurred_at":"2026-01-01T00:00:01.000Z","type":"heartbeat","payload":{}}
+{"schema_version":1,"event_id":"reconnect-3","run_id":"run-reconnect","producer_id":"sim-reconnect","sequence":3,"occurred_at":"2026-01-01T00:00:02.000Z","type":"heartbeat","payload":{}}
+{"schema_version":1,"event_id":"reconnect-4","run_id":"run-reconnect","producer_id":"sim-reconnect","sequence":4,"occurred_at":"2026-01-01T00:00:03.000Z","type":"heartbeat","payload":{}}
+{"schema_version":1,"event_id":"reconnect-5","run_id":"run-reconnect","producer_id":"sim-reconnect","sequence":5,"occurred_at":"2026-01-01T00:00:04.000Z","type":"heartbeat","payload":{}}
+{"schema_version":1,"event_id":"reconnect-6","run_id":"run-reconnect","producer_id":"sim-reconnect","sequence":6,"occurred_at":"2026-01-01T00:00:05.000Z","type":"telemetry.dropped","payload":{"count":3}}
+{"schema_version":1,"event_id":"reconnect-7","run_id":"run-reconnect","producer_id":"sim-reconnect","sequence":7,"occurred_at":"2026-01-01T00:00:06.000Z","type":"run.completed","payload":{}}

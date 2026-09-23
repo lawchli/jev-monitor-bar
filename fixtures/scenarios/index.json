@@ -1,0 +1,102 @@
+{
+  "scenarios": [
+    {
+      "id": "normal",
+      "title": "正常完成",
+      "file": "normal.jsonl",
+      "delay_ms": 400,
+      "pause_after_index": null,
+      "pause_ms": null,
+      "expect": {
+        "run_status": "completed",
+        "decisions": {"d1": "selected"},
+        "attempts": {"act-1/t1": "passed"},
+        "metrics": {"passed": 1, "failed": 0, "unknown": 0, "unverified": 0, "retries": 0}
+      }
+    },
+    {
+      "id": "dispersed",
+      "title": "概率分散，同一请求含 Choice、Score 与 Noul",
+      "file": "dispersed.jsonl",
+      "delay_ms": 400,
+      "pause_after_index": null,
+      "pause_ms": null,
+      "expect": {
+        "run_status": "completed",
+        "decisions": {"d-choice": "selected", "d-danger": "selected", "d-goal": "selected"},
+        "attempts": {"act-1/t1": "passed"},
+        "metrics": {"passed": 1, "failed": 0, "unknown": 0, "unverified": 0, "retries": 0}
+      }
+    },
+    {
+      "id": "rule-override",
+      "title": "规则覆盖模型选择",
+      "file": "rule-override.jsonl",
+      "delay_ms": 400,
+      "pause_after_index": null,
+      "pause_ms": null,
+      "expect": {
+        "run_status": "completed",
+        "decisions": {"d1": "selected"},
+        "attempts": {"act-1/t1": "passed"},
+        "metrics": {"passed": 1, "failed": 0, "unknown": 0, "unverified": 0, "retries": 0}
+      }
+    },
+    {
+      "id": "retry",
+      "title": "动作超时后重试并验证通过",
+      "file": "retry.jsonl",
+      "delay_ms": 400,
+      "pause_after_index": null,
+      "pause_ms": null,
+      "expect": {
+        "run_status": "completed",
+        "decisions": {"d1": "selected"},
+        "attempts": {"act-1/t1": "failed", "act-1/t2": "passed"},
+        "metrics": {"passed": 1, "failed": 0, "unknown": 0, "unverified": 0, "retries": 1}
+      }
+    },
+    {
+      "id": "verify-failed",
+      "title": "动作完成但验证失败",
+      "file": "verify-failed.jsonl",
+      "delay_ms": 400,
+      "pause_after_index": null,
+      "pause_ms": null,
+      "expect": {
+        "run_status": "verification_failed",
+        "decisions": {"d1": "selected"},
+        "attempts": {"act-1/t1": "verification_failed"},
+        "metrics": {"passed": 0, "failed": 1, "unknown": 0, "unverified": 0, "retries": 0}
+      }
+    },
+    {
+      "id": "reconnect",
+      "title": "心跳后暂停，恢复时报告丢弃",
+      "file": "reconnect.jsonl",
+      "delay_ms": 400,
+      "pause_after_index": 4,
+      "pause_ms": 35000,
+      "expect": {
+        "run_status": "completed",
+        "decisions": {},
+        "attempts": {},
+        "metrics": {"passed": 0, "failed": 0, "unknown": 0, "unverified": 0, "retries": 0}
+      }
+    },
+    {
+      "id": "concurrent",
+      "title": "同一请求并发两个问题，另有规则直接决策",
+      "file": "concurrent.jsonl",
+      "delay_ms": 400,
+      "pause_after_index": null,
+      "pause_ms": null,
+      "expect": {
+        "run_status": "completed",
+        "decisions": {"d-a": "selected", "d-b": "selected"},
+        "attempts": {"act-model/t1": "passed", "act-rule/t1": "selected"},
+        "metrics": {"passed": 1, "failed": 0, "unknown": 0, "unverified": 0, "retries": 0}
+      }
+    }
+  ]
+}

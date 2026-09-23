@@ -1,25 +1,30 @@
 import {spawn} from 'node:child_process';
-import fs from 'node:fs';
 import {createRequire} from 'node:module';
 import path from 'node:path';
-import {fileURLToPath} from 'node:url';
+import {applyLaunchEnv, freshRuntimeTarget, removeFreshRuntime} from './runtime-fresh.mjs';
 
 const require = createRequire(import.meta.url);
 const args = process.argv.slice(2);
 const demo = args.includes('--demo');
 const fresh = args.includes('--fresh');
+const repoRoot = path.resolve(import.meta.dirname, '..');
 
 await import('./build.mjs');
 
-const env = {...process.env};
-if (demo) env.JEV_MONITOR_HOME = path.resolve('.runtime/demo');
-else if (!env.JEV_MONITOR_HOME) env.JEV_MONITOR_HOME = path.resolve('.runtime/dev');
-if (fresh) fs.rmSync(env.JEV_MONITOR_HOME, {recursive: true, force: true});
+const env = applyLaunchEnv(process.env, {demo, repoRoot});
+if (fresh) {
+  try {
+    removeFreshRuntime(repoRoot, freshRuntimeTarget(env, {demo, repoRoot}));
+  } catch (error) {
+    console.error(error.message);
+    process.exit(1);
+  }
+}
 
 const electron = spawn(require('electron'), ['.'], {stdio: 'inherit', env});
 let host;
 if (demo) {
-  host = spawn(process.execPath, [path.join(path.dirname(fileURLToPath(import.meta.url)), 'demo-host.mjs')], {
+  host = spawn(process.execPath, [path.join(import.meta.dirname, 'demo-host.mjs')], {
     stdio: 'inherit',
     env,
   });

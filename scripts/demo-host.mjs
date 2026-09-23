@@ -24,7 +24,7 @@ if (!home) {
   console.error('JEV_MONITOR_HOME or --home is required');
   process.exit(1);
 }
-const sessionFile = process.env.JEV_MONITOR_SESSION || path.join(home, 'session.json');
+const sessionFile = path.join(home, 'session.json');
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 const readyTimeoutMs = 20_000;

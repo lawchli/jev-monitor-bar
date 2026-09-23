@@ -16,10 +16,11 @@ function writeSession(home: string, url: string, token = 'token') {
   fs.writeFileSync(path.join(home, 'session.json'), JSON.stringify({url, token}));
 }
 
-function runHost(args: string[], timeoutMs: number) {
+function runHost(args: string[], timeoutMs: number, env?: NodeJS.ProcessEnv) {
   const started = Date.now();
   const child = spawn(process.execPath, [path.join(root, 'scripts/demo-host.mjs'), ...args], {
     cwd: root,
+    env,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let output = '';
@@ -153,6 +154,33 @@ test('demo host replays every scenario once through the receiver', async () => {
   } finally {
     if (child.exitCode === null) child.kill();
     await server.close();
+  }
+});
+
+test('demo host reads the session file inside its home', async () => {
+  const outsideHits: string[] = [];
+  const outside = await listen((req, res) => {
+    outsideHits.push(`${req.method} ${req.url ?? ''}`);
+    res.writeHead(200, {'content-type': 'application/json'});
+    res.end('{"ok":true}');
+  });
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'jev-demo-session-home-'));
+  const store = new EventStore(path.join(home, 'events'));
+  const server = await startServer(store, path.join(home, 'session.json'));
+  const outsideHome = fs.mkdtempSync(path.join(os.tmpdir(), 'jev-demo-session-out-'));
+  writeSession(outsideHome, `http://127.0.0.1:${outside.port}`, 'other');
+  try {
+    const result = await runHost(['--fast', '--once', '--scenario', 'normal', '--home', home], 15_000, {
+      ...process.env,
+      JEV_MONITOR_HOME: outsideHome,
+      JEV_MONITOR_SESSION: path.join(outsideHome, 'session.json'),
+    });
+    assert.equal(result.code, 0, result.output);
+    assert.equal(store.runs.size, 1);
+    assert.deepEqual(outsideHits, []);
+  } finally {
+    await server.close();
+    await outside.close();
   }
 });
 

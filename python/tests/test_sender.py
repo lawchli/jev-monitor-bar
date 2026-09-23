@@ -205,6 +205,16 @@ class SenderTest(unittest.TestCase):
                 accepted += 1
         self.assertEqual(accepted, 10)
         self.assertEqual(self.sender.stats()['dropped'], 5)
+        self.assertTrue(self.sender._thread.is_alive())
+        # Queue stays full while the session file is missing, so these emits
+        # must count as drops and return without waiting on the worker.
+        started = time.perf_counter()
+        for index in range(200):
+            self.assertFalse(self.sender.emit('progress.updated', {'completed': 100 + index}))
+        elapsed = time.perf_counter() - started
+        self.assertLess(elapsed, 0.2)
+        self.assertEqual(self.sender.stats()['dropped'], 205)
+        self.assertTrue(self.sender._thread.is_alive())
 
     def test_rewritten_session_recovers_from_401(self):
         server = self._start_server()
@@ -462,14 +472,29 @@ class SenderTest(unittest.TestCase):
             server.redirect_code = code
             if code == 302:
                 server.redirect_to = '/exfil'
+                self.assertTrue(server.redirect_to.startswith('/'))
             else:
                 server.redirect_to = f'http://127.0.0.1:{self.target.port}/exfil'
+                self.assertTrue(server.redirect_to.startswith('http://'))
             summary = f'code-{code}'
             before = server.posts
-            self.assertTrue(self.sender.emit('progress.updated', {'summary': summary}))
-            self.assertTrue(wait_until(lambda b=before: server.posts > b, timeout=4))
+            with self.assertLogs('jev_monitor', level='WARNING') as captured:
+                self.assertTrue(self.sender.emit('progress.updated', {'summary': summary}))
+                self.assertTrue(
+                    wait_until(
+                        lambda c=code: any(f'retrying status={c}' in line for line in captured.output),
+                        timeout=4,
+                    )
+                )
+            self.assertGreater(server.posts, before)
             self.assertEqual(self.target.posts, 0)
             self.assertEqual(self.target.call_snapshot(), [])
+            self._assert_location_has_no_bearer(server, self.target)
+            event_auths = [
+                auth for method, path, auth in server.call_snapshot() if method == 'POST' and path == '/events'
+            ]
+            self.assertTrue(event_auths)
+            self.assertTrue(all(auth == 'Bearer ' + server.token for auth in event_auths))
             self.assertTrue(all(method == 'POST' and path == '/events' for method, path, _auth in server.call_snapshot()))
             self.assertEqual(self.sender.stats()['sent'], index)
             self.assertTrue(self.sender._thread.is_alive())
@@ -486,9 +511,19 @@ class SenderTest(unittest.TestCase):
             [event['payload']['summary'] for event in server.snapshot()],
             ['code-301', 'code-302', 'code-303', 'code-307', 'code-308'],
         )
+        self._assert_location_has_no_bearer(server, self.target)
         self.assertTrue(all(method == 'POST' and path == '/events' for method, path, _auth in server.call_snapshot()))
         self.assertTrue(self.sender._thread.is_alive())
         self.assertEqual(self.sender.stats()['sent'], 5)
+
+    def _assert_location_has_no_bearer(self, *servers):
+        forwarded = [
+            (method, path, auth)
+            for server in servers
+            for method, path, auth in server.call_snapshot()
+            if path == '/exfil' and 'Bearer' in auth
+        ]
+        self.assertEqual(forwarded, [])
 
     def test_invalid_emit_returns_false_without_raising(self):
         missing = os.path.join(self.tmp, 'missing', 'session.json')

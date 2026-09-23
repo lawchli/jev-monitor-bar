@@ -184,3 +184,16 @@
   - `tests/protocol-artifacts.test.ts`：schema 文件与代码一致；每个场景逐行 `validateEvent` 后写入新的 `EventStore`，状态与 `index.json` 的 `expect` 一致。
 - 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm schema:export`、`pnpm typecheck`、`pnpm test` 通过，12 项测试全部通过。Windows / macOS 未在本机执行，交给 CI。未做桌面窗口验证。
 - 遗留：演示播放属于 P1-08；README 里的协议文档链接留给 P1-10。`verify-failed` 不发送 run 终态，run 状态停在 `verification_failed`。`pause_after_index` 从 0 起算，不暂停的场景为 `null`；`reconnect` 的 `pause_ms` 为 35000。P1-00 尚未合并，新的 TypeScript 按计划中的 Prettier 选项排过版，没有改既有文件的格式，也没有把 Prettier 加进依赖。
+
+## P1-08 — 演示：`pnpm demo` 与 Node 模拟宿主
+
+- 日期：2026-09-23
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：
+  - 分支基于 P1-05（紧凑条才能显示「可能断开」），并合并 P1-03 的场景文件。`package.json` 保留 `schema:export`，并增加 `demo` 与 `demo:host`。
+  - `scripts/demo-host.mjs`：`--fast`、`--once`、`--home`、`--scenario`。等待会话文件和 `GET /health` 最多 20 秒。会话 URL 只接受 `http://127.0.0.1`。按 `index.json` 顺序播放；每个场景重写 `run_id`、`producer_id`、从 1 开始的 `sequence`、`event_id` 和 `occurred_at`。同一毫秒内的事件时间戳加 1 毫秒，避免序号字符串比较把终态排乱。事件间隔为 `delay_ms`，`--fast` 时为 0。`pause_after_index` 之后暂停 `pause_ms`（`--fast` 时为 0），暂停期间不另发心跳。`ECONNREFUSED` 和 401 重读会话并退避重试（200 ms 起，上限 5 秒）。400、409 以及其他 HTTP 错误打印后以退出码 1 结束。
+  - `scripts/launch.mjs`：`--demo` 把 `JEV_MONITOR_HOME` 设为 `.runtime/demo`；`--fresh` 先删掉该目录。Electron 启动后用同一环境启动演示宿主；Electron 退出时结束宿主，宿主非 0 退出时结束 Electron。
+- 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（43 项）、`pnpm build` 通过。`--fast --once` 在 15 秒内跑完 7 个场景，最终状态与 `index.json` 的 `expect` 一致。桌面窗口上的「可能断开」见本条之后的补充（若还没有，则尚未验证）。Windows / macOS 窗口未验证。
+- 遗留：README 未改。本分支包含尚未合并的 P1-03 与 P1-05，PR 基线是 P1-05 分支。`docs/PROTOCOL.md` 仍写着路径解析未实现，那是 P1-03 的原文，本切片不改。

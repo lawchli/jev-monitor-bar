@@ -515,3 +515,21 @@
 - 内容：启动只删除一次，两套保护都还在。`freshRuntimeTarget` 先拒绝和本次目标不一致的自定义 `JEV_MONITOR_HOME`，不删除仓库外的目录。通过后只调用 `deleteFreshRuntime`：删除前用 `lstat` 拒绝路径上的符号链接，再用 `realpath` 确认目标是本仓库 `.runtime/dev` 或 `.runtime/demo`。对不上就抛错，不调用 `rm`。指向仓库外的符号链接和它外面的目录都保持原样。`removeFreshRuntime` 仍按原词法路径和符号链接规则拒绝，实际删除改为调用 `deleteFreshRuntime`。`applyLaunchEnv` 不变：`pnpm demo` 只在返回给子进程的环境里把 `JEV_MONITOR_HOME` 和 `JEV_MONITOR_SESSION` 设到 `.runtime/demo` 与其中的 `session.json`，不改写原来的外部会话文件。普通 `pnpm demo`（带 `--fresh`）仍会清掉仓库内 `.runtime/demo` 再启动。
 - 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm typecheck` 通过；`pnpm exec tsx --test tests/launch-fresh.test.ts tests/runtime-fresh.test.ts tests/demo-host.test.ts` 24 项通过。未做 Windows / macOS。
 - 遗留：符号链接检查与删除之间仍有替换窗口。A1–A7、A9、A10 未在本分支处理。
+
+## 11 — 闭环验收，并放宽队列满的墙钟上限
+
+- 日期：2026-09-23
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：没有合并 `cursor/fix-expanded-a1-a4-83b9` 的 `c7f46d0`。它的基线不是集成分支的祖先，三方差异会碰到已经接入的 `TimelineTab`、`{events, truncated}` 和 `historyTruncated`。集成分支上的 A1/A4 仍是记录 10 的 `edad472`：选择写「应用选择/待执行」，`started` 写「执行中」，`completed` 且未验证写「已执行待验证」，`source: application` 写「应用覆盖为」，不编造规则来源。`c7f46d0` 用的是「待执行 / 应用改选为」，没有接进来。
+  - `test_queue_overflow_counts_dropped` 的 200 次满队列 `emit` 上限从 0.2 秒改为 2.0 秒。记录 09 的原文不改。Windows 上 Python 3.13 的 CI（提交 `e5ca5c8`，run `35819183951`）测到 0.57 秒，断言失败；同一次里其余 core 与 Python 作业通过。默认 HTTP `timeout` 是 0.5 秒，200 次若堵在工作线程上大约是 100 秒。2 秒仍要求调用方不等待这次投递。线程存活、返回 false、`dropped` 计数没有放宽。
+- 验证：Linux（`DISPLAY=:1`，X11，Electron 42.11.6）上对当时的 `b5d2897` 执行 `pnpm demo`（`node scripts/launch.mjs --demo --fresh`），启动命令没有 API key。会话文件由接收端写到仓库内 `.runtime/demo/session.json`。演示宿主经 HTTP 写入 7 个场景：正常完成、概率分散、规则覆盖、失败后重试、验证失败、断线恢复、并发决策；同一轮里都能在 `events-00000001.jsonl` 里对上。窗口标题为 JEV Monitor Bar。
+  - 紧凑条与展开视图都停在「闭环：只选择」。展开决策链为「JEV 选择 A → 应用覆盖为 B → 应用选择/待执行 B」。紧凑条状态与执行状态都是「已选择」，最新事件是 `action.selected`，没有写成已执行或成功。
+  - 「闭环：完成未验证」的状态是「已执行待验证」，摘要为「验证成功 0 / 已验证 0；验证失败 0；未知 0；未验证 1」，决策链为「JEV 选择 go → 已执行待验证 go」。没有显示验证成功。
+  - 时间线滚离底部后是「已暂停跟随 · 0 条新事件 · 回到最新」，视口第一条仍是 `run.started`。暂停期间再 POST 5 条 `heartbeat`，文件从 740 行增到 745 行，按钮变为「已暂停跟随 · 5 条新事件」，并写「正在查看较早事件（46 条）」，第一条仍是 `run.started`。
+  - 导出保存为 `/tmp/jev-closed-loop-export.jsonl.jsonl`（对话框在名字后加了过滤后缀），289272 字节、770 行。其中 `password=hunter2` 变成 `password=[REDACTED]`，文件里没有 `hunter2`。接收端入库时已经写成脱敏后的正文，原始 JSONL 同样没有 `hunter2`。窗口提示「已导出 jev-closed-loop-export.jsonl.jsonl」。
+  - 打开该文件回放，横幅为「回放：jev-closed-loop-export.jsonl.jsonl（不影响实时接收）」，位置停在「第 770 / 770 条」。回放期间 POST `run.started`「闭环：回放期间仍在接收」得到 `{"accepted":true,"cursor":903}`，事件文件增到 903 行，横幅仍是回放。退出回放后紧凑条回到「闭环：完成未验证 / 已执行待验证」。再向该 run POST 一条 `heartbeat` 后，连接从「可能断开」变为「在线」，最新事件为 `heartbeat`，执行状态仍是「已执行待验证」。
+  - 同一会话上用系统 Python 3.12.3 运行 `python python/examples/fake_host.py`（`JEV_MONITOR_HOME` 指向 `.runtime/demo`）。四个场景 `sent` 分别为 10、8、11、8，`dropped=0`，`offline=False`。事件文件里的 `producer_id` 前缀是 `fake-host-`，终态分别是 `run.completed`、`run.completed`、`run.completed`、`run.failed`。当时窗口仍停在先前手选的 run，没有自动改选到这四条。
+  - 同一工作树在改这处断言之前，`pnpm format:check`、`pnpm typecheck`、`pnpm test`、`pnpm build`、`pnpm schema:export`（协议与 `event.schema.json` 无差异）和系统 Python 3.12 的 unittest 已通过。Python 3.9.25 与 3.13.15（uv）的 `unittest discover` 也已通过。本条只改 Python 测试的时限后，再跑 3.9、3.12、3.13 的 unittest。未把这次 Linux Electron 窗口写成 Windows 或 macOS 原生验收。
+- 遗留：A9 的 30 分钟负载、Windows 原生置顶与 DPI、打包、Defender 留到本分支合并之后。GitHub Actions 在 `b5d2897` 上全部作业未启动，注解是账户付款失败或支出上限，不是测试失败。`e5ca5c8` 的 Windows Python 3.13 失败就是上面的 0.2 秒断言。本条推送后的三平台 CI 以 Actions 为准；CI 通过也只表示 build、纯函数和 DOM，不是原生窗口已验收。`c7f46d0` 未合并。

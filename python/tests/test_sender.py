@@ -208,11 +208,13 @@ class SenderTest(unittest.TestCase):
         self.assertTrue(self.sender._thread.is_alive())
         # Queue stays full while the session file is missing, so these emits
         # must count as drops and return without waiting on the worker.
+        # Each drop also logs a warning. Windows CI measured 0.57s for these
+        # 200 calls; blocking on the 0.5s HTTP timeout would be about 100s.
         started = time.perf_counter()
         for index in range(200):
             self.assertFalse(self.sender.emit('progress.updated', {'completed': 100 + index}))
         elapsed = time.perf_counter() - started
-        self.assertLess(elapsed, 0.2)
+        self.assertLess(elapsed, 2.0)
         self.assertEqual(self.sender.stats()['dropped'], 205)
         self.assertTrue(self.sender._thread.is_alive())
 

@@ -18,6 +18,8 @@ export function ExpandedView({
   onSetMode,
   pinned,
   onTogglePinned,
+  onExport,
+  onOpenReplay,
   bridge,
 }: ViewProps) {
   const [tab, setTab] = useState<TabId>('decisions');
@@ -48,6 +50,12 @@ export function ExpandedView({
         ) : (
           <strong className="run-name">JEV Monitor</strong>
         )}
+        <button type="button" data-testid="export-events" onClick={onExport}>
+          导出
+        </button>
+        <button type="button" data-testid="open-replay" onClick={onOpenReplay}>
+          打开回放
+        </button>
         <button type="button" onClick={() => onSetMode('compact')}>
           收起
         </button>

@@ -1,7 +1,10 @@
 import {useEffect, useRef, useState} from 'react';
-import type {MonitorBridge, WindowMode} from '../ipc';
+import type {MonitorBridge, ReplayData, WindowMode} from '../ipc';
+import {fileBase} from '../replay';
 import {CompactView} from './compact/CompactView';
 import {ExpandedView} from './expanded/ExpandedView';
+import {ReplayView} from './replay/ReplayView';
+import './replay/replay.css';
 import type {ViewProps} from './types';
 import {useMonitor} from './useMonitor';
 import {pickDefaultRun} from './view-model/common';
@@ -16,6 +19,8 @@ export function App({bridge}: {bridge: MonitorBridge}) {
   const [mode, setMode] = useState<WindowMode>('compact');
   const [pinned, setPinned] = useState(true);
   const [commandError, setCommandError] = useState<string>();
+  const [exportNote, setExportNote] = useState<string>();
+  const [replay, setReplay] = useState<ReplayData | null>(null);
   const commandPending = useRef(false);
   const commandEpoch = useRef(0);
   const selectedRunId = explicitRunId ?? autoRunId;
@@ -92,6 +97,29 @@ export function App({bridge}: {bridge: MonitorBridge}) {
       );
     },
     bridge,
+    onExport: () => {
+      void bridge
+        .exportEvents()
+        .then(result => {
+          if (result.saved) {
+            const name = result.path ? fileBase(result.path) : '文件';
+            setExportNote(`已导出 ${name}（${result.bytes ?? 0} 字节）`);
+          } else {
+            setExportNote('已取消导出');
+          }
+          setCommandError(undefined);
+        })
+        .catch((reason: unknown) => setCommandError(message(reason)));
+    },
+    onOpenReplay: () => {
+      void bridge
+        .openReplay()
+        .then(data => {
+          if (data) setReplay(data);
+          setCommandError(undefined);
+        })
+        .catch((reason: unknown) => setCommandError(message(reason)));
+    },
   };
 
   const notices = [
@@ -109,7 +137,14 @@ export function App({bridge}: {bridge: MonitorBridge}) {
           </p>
         ) : null,
       )}
-      {mode === 'expanded' ? <ExpandedView {...props} /> : <CompactView {...props} />}
+      {exportNote ? <p className="line">{exportNote}</p> : null}
+      {replay ? (
+        <ReplayView replay={replay} now={now} onExit={() => setReplay(null)} />
+      ) : mode === 'expanded' ? (
+        <ExpandedView {...props} />
+      ) : (
+        <CompactView {...props} />
+      )}
     </div>
   );
 }

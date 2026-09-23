@@ -172,3 +172,18 @@
   - 组件测试需要 DOM，因此用 `pnpm add -D jsdom` 增加开发依赖。运行时依赖没有变。
 - 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（38 通过）、`pnpm build` 通过。组件测试用延迟的 `page()`：切到另一个 run 并 resolve 后不出现原 run 的事件，切回去也不出现；同一次响应里别的 run 的事件被丢掉。Windows / macOS 窗口未验证。
 - 遗留：同上一则 P1-06。三平台 CI 见本 PR。
+
+## P1-09 — 导出与回放
+
+- 日期：2026-09-23
+- harness：cursor
+- model：grok
+- 提交：本条所在提交
+- 内容：
+  - 本条由 Cursor 云端 agent 完成。git 作者沿用环境里已经设好的 Cursor Agent（`cursoragent@cursor.com`），没有改 `user.name` / `user.email`，提交信息里也不另加署名。
+  - 分支从 `cursor/p1-06-expanded-view-9f65` 拉出，没有改 P1-04 或其他开放分支。保存对话框挂在当前窗口的 `webContents` 上，不依赖 P1-04 的位置记忆模块。
+  - 新增 `src/replay.ts`：`parseReplay` 只接收校验和脱敏函数，不导入 `node:*`。按行解析，兼容 `\r\n` 和文件开头的 BOM。普通事件缺少 `received_at` / `cursor` 时，用 `occurred_at` 和 1 起的行号补上。先校验再脱敏，坏行计数，最多保留 20000 条。`replaySnapshot` 用 `applyEvent` 重放到第 N 条，去重和 200 个 run 的淘汰与 `EventStore` 一致。
+  - IPC 只新增 `monitor:export`、`monitor:open-replay`。`exportEvents` 弹出保存框，默认文件名 `jev-monitor-export-<YYYYMMDD-HHMMSS>.jsonl`，写入 `store.exportLines()`。`openReplay` 只打开 `.jsonl`，超过 50 MiB 拒绝。取消对话框时导出返回 `{saved:false}`，回放返回 `null`。
+  - 展开视图增加「导出」「打开回放」。回放横幅为「回放：<文件名>（不影响实时接收）」，有进度条、上一条、下一条、播放/暂停、1×（800 ms/条）和 10×（80 ms/条）。三个页签复用 P1-06 的组件。退出回放回到实时视图。回放期间实时接收继续，时间线分页不读实时存储。
+- 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（43 项，含原先 38 项）通过，`pnpm build` 通过。同一环境 Electron 42.11.6、`DISPLAY=:1`：POST 三条模拟事件后切到展开模式，导出 923 字节的 JSONL（含「演示任务」），再打开该文件。横幅为「回放：jev-monitor-export-check.jsonl（不影响实时接收）」，位置从「第 3 / 3 条」变为「第 2 / 3 条」，`#app-root` 的 `data-cursor` 仍是 3。截图：展开页 `/opt/cursor/artifacts/p1-09-expanded.png`，回放页 `/opt/cursor/artifacts/p1-09-replay.png`。Windows / macOS 窗口未验证。
+- 遗留：P1-04 尚未并入本分支，多显示器位置记忆不在这次里。回放时间线的「加载更早」只查当前回放前缀，不查实时库。播放间隔是实现选择，计划没有写毫秒数。README 未改。三平台 CI 见本 PR。

@@ -11,4 +11,6 @@ export interface ViewProps {
   pinned: boolean;
   onTogglePinned(): void;
   bridge: MonitorBridge;
+  onExport(): void;
+  onOpenReplay(): void;
 }

@@ -90,3 +90,13 @@
 - 内容：按仓库所有者要求审计 GitHub 全部 13 个现存分支、11 个开放 draft PR、提交依赖及各 HEAD 的 CI；新增根目录 `AGENT_DIRECTION_AUDIT.md`，登记 A1–A10、复现证据、建议集成顺序与验收门槛。在 `docs/AUDIT.md` 追加入口。只改审计文档，未合并功能分支、未改应用代码，里程碑表保持 main 的实际状态。其他未合并分支也有编号 06，集成时保留各条标题和历史，不覆盖。
 - 验证：Linux，临时 Node 22.23.2 / pnpm 11.19.0；main 基线 typecheck 与 test 10/10 通过；P1-09 独立快照 typecheck、test 43/43、build 通过；P1-07 独立快照 Python 3.13.5 测试 16/16 通过。GitHub 上 13 个分支当前 HEAD 的三平台 core job 均成功，P1-07 六个 Python job 均成功。另有针对性临时探针和两组 merge-tree 试合并，详见根目录报告。本提交推送后的 CI 以本提交 Actions 为准。
 - 遗留：报告问题尚未修复；所有功能 PR 仍待集成。未执行原生 Windows/macOS 窗口、可见延迟、30 分钟负载、打包或 Defender 验证。
+
+## 07 — 集成前复核 13 个分支 HEAD
+
+- 日期：2026-09-23
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：按记录 06 与 `AGENT_DIRECTION_AUDIT.md` 开工前重新 fetch。13 个分支中 P1-01、P1-07、P1-08、P1-09 的 HEAD 已前进，其余与报告一致。在审计报告文末追加「集成前 HEAD 复核」表，并在 `docs/AUDIT.md` 追加同一事实。原审计表与记录 06 不改写。尚未开始合并功能分支。
+- 验证：`git fetch` 后用 `git rev-parse` 对照报告中的 13 个短 SHA。不一致的是 `cursor/p1-01-walking-skeleton-8677` `81e0117`、`cursor/p1-07-python-sender-52eb` `cc0981f`、`cursor/p1-08-demo-host-33a4` `de08926`、`cursor/p1-09-export-replay-973f` `dcf879c`。未跑测试，未打开每个 CI job。
+- 遗留：功能集成、A1–A8 回归与闭环验收都还没做。A9 与 Windows 原生窗口、打包、Defender 留到集成分支合并之后。

@@ -160,3 +160,27 @@
 - **未做** Windows/macOS 原生窗口实测、30 分钟负载、可见延迟测量、打包、Defender 扫描或发布；不能据本文把 M2–M5 标为完成。TypeSafe SDK 接口没有修改，此次未重复官方接口调查。
 
 后续 agent 完成问题时，请引用 A 编号追加修复证据及对应提交；不要直接删去问题使历史看起来“从未存在”。本文件合并后，仍应重新 fetch 核对 HEAD，避免把今天的分支表当永久现状。
+
+## 集成前 HEAD 复核（2026-09-23，cursor）
+
+上面的分支表是审计当时的快照，保留不改。集成前重新 `git fetch` 后，13 个分支里有 4 个 HEAD 已经前进。下表是这次集成实际采用的远端 HEAD。没有改任何既有功能分支。
+
+| 分支（`cursor/` 前缀除 main 外省略） | 报告中的 HEAD | 复核后的 HEAD | 相对报告的变化 |
+| --- | --- | --- | --- |
+| `main` | `cd99afb` | `cd99afb` | 无 |
+| `audit-plan-cross-platform-466a` | `279ae42` | `279ae42` | 无；已合并，不再并入 |
+| `p1-00-format-boundaries-d8ab` | `32e2439` | `32e2439` | 无 |
+| `p1-01-walking-skeleton-8677` | `c5a3a18` | `81e0117` | 新增 `81e0117`：`--fresh` 只删除本仓库 `.runtime/dev` / `.runtime/demo`（`scripts/fresh-runtime.mjs`）。P1-02/04/05/06/07 的祖先仍是 `c5a3a18`，不是这个新提交 |
+| `p1-02-core-robustness-fccb` | `46bc2b2` | `46bc2b2` | 无 |
+| `p1-03-protocol-artifacts-b73d` | `98a719a` | `98a719a` | 无 |
+| `p1-04-window-platform-a4ff` | `b74a7c2` | `b74a7c2` | 无 |
+| `p1-05-compact-bar-9236` | `fcf974d` | `fcf974d` | 无 |
+| `p1-06-expanded-view-9f65` | `8256599` | `8256599` | 无。A1、A4 仍在这个 HEAD 上，没有后续修复提交 |
+| `p1-07-python-sender-52eb` | `c44e074` | `cc0981f` | 新增 `cc0981f`：声称入队前做不可变 JSON，坏负载不退出 worker，301/302/303/307/308 不跟随 Location。祖先仍是 `c5a3a18` |
+| `p1-08-demo-host-33a4` | `b862958` | `de08926` | 新增 `de08926`：另一份 `--fresh` 实现（`scripts/runtime-fresh.mjs`），并把 demo 的 session 固定到 `.runtime/demo/session.json`。不含 `81e0117` |
+| `p1-09-export-replay-973f` | `94d1f01` | `dcf879c` | `927c4d5` 声称回放超过 200 个 run 时焦点仍落在窗口内，并给回放前缀做「加载更早」；`dcf879c` 声称导出改为逐行校验、脱敏并跳过损坏行。祖先仍是 P1-06 `8256599` |
+| `status-snapshot-a932` | `9537853` | `9537853` | 无。仍只追加现状更正，不作为派工依据 |
+
+这些新提交是功能分支上的后续修复，不是本文件把 A1–A10 标成已解决。集成时采用复核后的 HEAD；栈式祖先已经在历史里的不再重复 cherry-pick。P1-01 与 P1-08 各有一份 `--fresh` 实现，冲突时两套保护都留下，再在集成分支上收成一份符合 A8 验收的行为。报告里的优先级不变：A1、A2、A3、A4、A5、A6、A8 是合并前必须修，A4 与 A7 是历史浏览/回放验收门槛，A7、A9、A10 是收尾时落实或明确限制。A9 与 Windows 原生置顶/DPI、打包、Defender 不在本分支合并前的范围内。
+
+新 HEAD 的 GitHub Actions 不沿用上表旧 run。复核时 `cc0981f`、`927c4d5`、`dcf879c` 的 workflow 结论为 success；`81e0117` 与 `de08926` 当时仍在跑。没有逐项打开每个 OS job，也不把这些结论写成原生窗口已验收。集成分支自己的三平台 CI 另记。

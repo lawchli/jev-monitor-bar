@@ -10,7 +10,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "build": "node scripts/build.mjs",
-    "start": "node scripts/launch.mjs"
+    "start": "node scripts/launch.mjs",
+    "schema:export": "tsx scripts/export-schema.ts"
   },
   "dependencies": {
     "ajv": "^8.17.1",

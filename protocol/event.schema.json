@@ -1,0 +1,463 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "JEV Monitor event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "run_id",
+    "producer_id",
+    "sequence",
+    "occurred_at",
+    "type",
+    "payload"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "event_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "pattern": "^[a-zA-Z0-9_.:/-]+$"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "pattern": "^[a-zA-Z0-9_.:/-]+$"
+    },
+    "producer_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "pattern": "^[a-zA-Z0-9_.:/-]+$"
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "type": {
+      "enum": [
+        "run.started",
+        "run.completed",
+        "run.failed",
+        "run.cancelled",
+        "decision.started",
+        "decision.resolved",
+        "decision.failed",
+        "action.selected",
+        "action.started",
+        "action.completed",
+        "action.failed",
+        "action.cancelled",
+        "verification.completed",
+        "progress.updated",
+        "heartbeat",
+        "telemetry.dropped"
+      ]
+    },
+    "decision_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "pattern": "^[a-zA-Z0-9_.:/-]+$"
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "pattern": "^[a-zA-Z0-9_.:/-]+$"
+    },
+    "question_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "pattern": "^[a-zA-Z0-9_.:/-]+$"
+    },
+    "action_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "pattern": "^[a-zA-Z0-9_.:/-]+$"
+    },
+    "attempt_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "pattern": "^[a-zA-Z0-9_.:/-]+$"
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "simulated": {
+          "type": "boolean"
+        },
+        "phase": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "question": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "kind": {
+          "enum": [
+            "choice",
+            "score",
+            "noul"
+          ]
+        },
+        "candidates": {
+          "type": "object",
+          "maxProperties": 255,
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 4096
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "propertyNames": {
+            "maxLength": 160,
+            "not": {
+              "enum": [
+                "__proto__",
+                "constructor",
+                "prototype"
+              ]
+            }
+          }
+        },
+        "choice": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "score": {
+          "type": "number",
+          "minimum": 0
+        },
+        "noul": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "probabilities": {
+          "type": "object",
+          "maxProperties": 255,
+          "additionalProperties": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "propertyNames": {
+            "maxLength": 160,
+            "not": {
+              "enum": [
+                "__proto__",
+                "constructor",
+                "prototype"
+              ]
+            }
+          }
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "model": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "latency_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "legend": {
+          "type": "object",
+          "maxProperties": 255,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "propertyNames": {
+            "maxLength": 160,
+            "not": {
+              "enum": [
+                "__proto__",
+                "constructor",
+                "prototype"
+              ]
+            }
+          }
+        },
+        "explanation": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "explanation_source": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "action": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "source": {
+          "enum": [
+            "model",
+            "rule",
+            "application"
+          ]
+        },
+        "rule": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "rule_source": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "result": {
+          "enum": [
+            "passed",
+            "failed",
+            "unknown"
+          ]
+        },
+        "checks": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "observed",
+              "result"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "maxLength": 4096
+              },
+              "observed": {
+                "type": "string",
+                "maxLength": 4096
+              },
+              "result": {
+                "enum": [
+                  "passed",
+                  "failed",
+                  "unknown"
+                ]
+              },
+              "evidence": {
+                "type": "string",
+                "maxLength": 4096
+              }
+            }
+          }
+        },
+        "completed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "retry": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "usage": {
+          "type": "object",
+          "maxProperties": 255,
+          "additionalProperties": {
+            "type": "number",
+            "minimum": 0
+          },
+          "propertyNames": {
+            "maxLength": 160,
+            "not": {
+              "enum": [
+                "__proto__",
+                "constructor",
+                "prototype"
+              ]
+            }
+          }
+        },
+        "diagnostic": {}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "decision.started",
+              "decision.resolved",
+              "decision.failed"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "decision_id",
+          "request_id",
+          "question_id"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "action.selected",
+              "action.started",
+              "action.completed",
+              "action.failed",
+              "action.cancelled",
+              "verification.completed"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "action_id",
+          "attempt_id"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "decision.started"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "required": [
+              "kind",
+              "question"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "decision.resolved"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "required": [
+              "kind"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "action.selected"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "required": [
+              "action",
+              "source"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "verification.completed"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "required": [
+              "result",
+              "checks"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "telemetry.dropped"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "required": [
+              "count"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -199,3 +199,17 @@
   - `armQuit` 接住 `close()` 的拒绝，调用 `recordCleanupFailure` 把消息并进 `storageError` 并 `console.warn`，然后仍然 `quit`。回调自己抛错时也只告警，不留下未处理拒绝。
 - 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（38 项）、`pnpm build` 通过。会话发布失败会关掉监听；稍后的 `error` 事件不再被启动监听吞掉。删除重试、`ENOENT`、token 变化和退出时清理失败仍 quit 均有测试。Windows 文件锁用 mock，未在 Windows 实机占用文件。三平台 CI 见本 PR。
 - 遗留：同上一则 P1-02。退出时的 `storageError` 只留在进程内状态；窗口正在退出，界面不一定来得及刷新。
+
+## P1-03 — 协议制品：JSON Schema、协议文档与模拟场景
+
+- 日期：2026-09-22
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：
+  - `scripts/export-schema.ts` 与 `pnpm schema:export`：把 `src/protocol.ts` 的 `schema` 写成 `protocol/event.schema.json`（`JSON.stringify(schema, null, 2)` 加换行）。
+  - `docs/PROTOCOL.md`：按当前接收、存储、状态聚合和脱敏代码写协议说明。数据目录只列需求里的默认位置，并写明路径解析尚未实现。
+  - `fixtures/scenarios/`：7 个模拟场景（normal、dispersed、rule-override、retry、verify-failed、reconnect、concurrent），每个文件一条 run。
+  - `tests/protocol-artifacts.test.ts`：schema 文件与代码一致；每个场景逐行 `validateEvent` 后写入新的 `EventStore`，状态与 `index.json` 的 `expect` 一致。
+- 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm schema:export`、`pnpm typecheck`、`pnpm test` 通过，12 项测试全部通过。Windows / macOS 未在本机执行，交给 CI。未做桌面窗口验证。
+- 遗留：演示播放属于 P1-08；README 里的协议文档链接留给 P1-10。`verify-failed` 不发送 run 终态，run 状态停在 `verification_failed`。`pause_after_index` 从 0 起算，不暂停的场景为 `null`；`reconnect` 的 `pause_ms` 为 35000。P1-00 尚未合并，新的 TypeScript 按计划中的 Prettier 选项排过版，没有改既有文件的格式，也没有把 Prettier 加进依赖。

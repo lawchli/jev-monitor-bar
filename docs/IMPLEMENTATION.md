@@ -213,3 +213,33 @@
   - `tests/protocol-artifacts.test.ts`：schema 文件与代码一致；每个场景逐行 `validateEvent` 后写入新的 `EventStore`，状态与 `index.json` 的 `expect` 一致。
 - 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm schema:export`、`pnpm typecheck`、`pnpm test` 通过，12 项测试全部通过。Windows / macOS 未在本机执行，交给 CI。未做桌面窗口验证。
 - 遗留：演示播放属于 P1-08；README 里的协议文档链接留给 P1-10。`verify-failed` 不发送 run 终态，run 状态停在 `verification_failed`。`pause_after_index` 从 0 起算，不暂停的场景为 `null`；`reconnect` 的 `pause_ms` 为 35000。P1-00 尚未合并，新的 TypeScript 按计划中的 Prettier 选项排过版，没有改既有文件的格式，也没有把 Prettier 加进依赖。
+
+## P1-04 — 桌面壳与平台模块（窗口行为、位置记忆、多显示器）
+
+- 日期：2026-09-22
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：
+  - `platformProfile` 返回 `{alwaysOnTopLevel:'floating', showInactive:true}`。macOS 的 `visibleOnAllWorkspaces` 与 `visibleOnFullScreen` 为 true，Windows、Linux X11、Linux Wayland 和其他平台为 false。各分支注释写明平台和验证状态。
+  - `window-state.ts` 不导入 Electron。`loadWindowState` 在文件缺失、JSON 损坏、版本不是 1 或形状不对时返回 `undefined`。`saveWindowState` 先写 `<file>.<pid>.<hex>.tmp`（mode 0600），再 `renameSync`；`EPERM` / `EBUSY` / `EACCES` 重试 5 次，第 n 次前用 `Atomics.wait` 等 20×n ms，仍失败则删掉临时文件并抛错，成功后 `chmodSync(file, 0o600)`。`fitToDisplays` 看窗口顶部 32px 条带：与某个 workArea 横向重叠至少 64px 且纵向相交时保留坐标，并把宽高截到该 workArea 内（重叠更大的显示器优先）；否则在主显示器 workArea 里居中，主显示器不在列表中时用第一块屏。坐标保持 DIP，不乘 `scaleFactor`。`switchMode` 只改当前模式的 bounds。
+  - 窗口默认紧凑 400×132（最小 360×96）、展开 440×640（最小 360×320）。启动读保存的状态，两种模式都经 `fitToDisplays` 校正。安全设置与 P1-01 相同；`ready-to-show` 时 `showInactive()`。置顶时 `setAlwaysOnTop(true, 'floating')`；仅当 profile 要求时再 `setVisibleOnAllWorkspaces(true, {visibleOnFullScreen:true})`。Wayland 仍走同一调用，限制说明留在 `detectPlatform` 的 notes。`move` / `resize` 防抖 500ms 后写入两种模式各自的 bounds，以及 `screen.getDisplayMatching` 的 id 和缩放。`setMode` 先记下当前模式的 bounds，再套用另一模式并设置对应最小尺寸。`display-removed` 与 `display-metrics-changed` 时重新 fit 并移动。页面仍由 `loadMonitorWindow` 在 `registerIpc({contents})` 之后加载。
+  - `index.ts` 只把 `paths.windowStateFile` 传给 `createMonitorWindow`。
+- 验证：Linux VM（Ubuntu 24.04.4，内核 6.12.94+，XFCE / xfwm4，`DISPLAY=:1`，1920×1200，Electron 报告 `scaleFactor` 0.984375，Node 22.14.0，pnpm 11.19.0，Electron 42.11.6）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（43 项）、`pnpm build` 通过。启动后活动窗口仍是 Desktop，窗口带 `_NET_WM_STATE_ABOVE`。拖到约 (182,243) 并缩到约 469×184 后，`window-state.json` 记下紧凑 bounds，展开 bounds 仍是 440×640。`setMode('expanded')`、取消置顶再置顶、再回到紧凑后，两边 bounds 都没有被对方盖掉，`status.platform.os` 为 `linux-x11`。退出再打开，JSON 与退出前完全一致，活动窗口仍是 Desktop，置顶原子仍在。另开一个 `xmessage` 并让它获得焦点后，小窗仍画在它上面；展开后标题下可见「展开视图（待实现）」。Windows / macOS 窗口未验证。Wayland 未实机验证。
+- 遗留：本机 `setBounds(getBounds())` 会按约 `1/scaleFactor` 把窗口放大，所以 show 之后 250ms 以及本进程自己的 `setBounds` 引起的几何事件不写入文件，保存的是请求的 DIP 矩形；用户拖动仍写入当时的 `getBounds`。因此视觉像素和文件里的 DIP 差几个像素，但重启不会越变越大。取消置顶时若 profile 打开了所有工作区，会再调用 `setVisibleOnAllWorkspaces(false)`。关闭窗口时会立刻把尚未防抖落盘的状态写完。没有历史文件时，两种模式都先放到屏幕外再居中，避免默认 (0,0) 被当成已经落在主屏上。README 未改。Windows、macOS 窗口未验证。
+
+## P1-04 — 校正分数缩放下的位置回声
+
+- 日期：2026-09-22
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：
+  - 上一则把「重启不会越变越大」说早了。用户只移动窗口时，`getBounds()` 仍比刚应用的矩形大约 6px，下一次启动会把这个放大后的尺寸再存回去。审计在本机用 4 次「启动 → `windowmove` → 退出」从 400×132 放大到 422×155。
+  - `boundsEcho` 记录 `getBounds()` 与刚应用到窗口的矩形之差。`userRect` 保存时减掉这个差。`move` 只改 x/y，`resize` 才改宽高。show 之后 250ms 以及每次 `applyBounds` 后再量一次回声，这段时间不再丢掉用户拖动；同步回声仍靠 `applying` 忽略。Linux X11 的回声可能要等窗口映射完才稳定；Windows / macOS 通常在 `setBounds` 里面就报出来。
+  - `display-metrics-changed` / `display-removed` 只对已保存的 DIP 矩形做 `fitToDisplays`，结果与当前矩形不同才 `setBounds`。
+  - 最小化、最大化或全屏时不把当时的 `getBounds()` 写入；退出时改读 `getNormalBounds()` 再减回声。窗口同时 `maximizable:false`、`fullscreenable:false`。
+  - `setAlwaysOnTop` 改到 `ready-to-show` 才调用，不再在显示前先调一次。`setVisibleOnAllWorkspaces` 只在置顶状态真正变化、且该平台 profile 要求时调用。macOS 仍未实机验证。
+  - `platform.ts` 里 Linux X11 的注释收窄为：置顶与不抢焦点已在 Linux VM 验证。位置恢复不写进那句注释。
+- 验证：Linux VM（Ubuntu 24.04.4，XFCE / xfwm4，`DISPLAY=:1`，`scaleFactor` 0.984375，Electron 42.11.6）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`、`pnpm build` 通过。四轮探针（全新目录，每轮启动后 `xdotool windowmove`，等防抖写入，再 `SIGTERM`）：紧凑尺寸依次为 400×132、401×133、400×132、400×133，相对初始 400×132 的偏差不超过 1px，没有再按每轮约 6px 累加。展开 bounds 保持 440×640。Windows / macOS / Wayland 未验证。
+- 遗留：P2-06 清单请加：Windows 上最小化、最大化、还原后再重启；macOS 上启动和切换置顶时不闪 Dock、不激活，以及全屏 Space 之上是否可见。`'floating'` 在 macOS 全屏应用之上往往不够，是否改用更高等级要协调者决定，这次没有改规格。README 未改。

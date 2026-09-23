@@ -545,3 +545,13 @@
   - 本条 push 会按 `.github/workflows/ci.yml` 的 `push` 和 `pull_request` 再启动一次 ci。作业仍是 Windows、Ubuntu、macOS 的 core（`format:check`、`typecheck`、`test`、`build`）和 Python 3.9 / 3.13。
 - 验证：`gh repo view lawchli/jev-monitor-bar --json visibility,isPrivate` 得到 `visibility` 为 `PUBLIC`、`isPrivate` 为 false。重跑接口未执行成功。这次 push 之后的 CI 以 Actions 上的新 run 为准，本条不把它们写成已通过。
 - 遗留：A9 的 30 分钟负载、Windows 原生置顶与 DPI、打包、Defender 仍留到 PR #14 合并之后。PR #14 仍是 draft，未合并。CI 通过也只表示 build、纯函数和 DOM，不是原生窗口、30 分钟负载、打包或 Defender 已验收。
+
+## 13 — 记下 b6ce074 的三平台 CI
+
+- 日期：2026-09-23
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：记录 12 的 push 启动了新的 ci。提交 `b6ce074` 上 push run `35829372457` 与 pull_request run `35829375092` 都成功。各 9 个作业都有 runner，并且步骤跑完：Windows、Ubuntu、macOS 的 core 通过 `pnpm format:check`、`pnpm typecheck`、`pnpm test`、`pnpm build`；同一三个系统上 Python 3.9 与 3.13 的 `python -m unittest discover -s python/tests -v` 通过。没有改产品代码。
+- 验证：以上作业的结论来自 GitHub Actions API，runner 名非空，对应步骤结论为 success。这次通过只表示 build、纯函数和 DOM。没有把 Windows 或 macOS 原生窗口、置顶、DPI、30 分钟负载、打包或 Defender 写成已验收。
+- 遗留：A9 的 30 分钟负载、Windows 原生置顶与 DPI、打包、Defender 仍留到 PR #14 合并之后。PR #14 在本条之后改为可审阅，不在这里合并进 main。

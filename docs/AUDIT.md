@@ -63,3 +63,13 @@
 | P12 | 提交只标注模型署名，没有标注执行环境，GitHub 提交列表里也看不到署名 | 提交标题加 `[署名]`，正文加 `Agent-Model`（含具体模型名称）与 `Agent-Env` |
 
 P12 后续：仓库所有者改为按运行位置区分。Cursor 云端 agent 直接用 Cursor Agent 账号提交；本地开发记录小写的 harness 与 model（`[<harness>/<model>]`、`agent-harness` / `agent-model`）。旧格式作废，已有提交不改写。见实施记录 04。model 只记厂商和系列、不写版本号（如 `claude-opus`、`gpt-sol`），见实施记录 05。
+
+## 2026-09-23 全分支方向审计（codex/gpt-astra）
+
+根目录报告：[`AGENT_DIRECTION_AUDIT.md`](../AGENT_DIRECTION_AUDIT.md)。后续 agent 接手时一并阅读。
+
+本次覆盖 GitHub 全部 13 个现存远端分支（main 基线 `cd99afb`）、11 个开放 draft PR 及各 HEAD 的 CI。结论：产品定位和基本架构方向正确，当前主要风险是功能切片尚未集成，以及既有绿灯测试未覆盖真实闭环缺陷。
+
+报告 A1–A10 登记：选定动作被写成已执行、Python 序列化导致 worker 退出、默认重定向绕过 loopback、历史分页不可达、导出绕过脱敏、跨段导出丢事件、回放焦点淘汰、开发 fresh 清理边界、聚合内存口径和文档状态偏差。明确区分生产函数复现、源码确认、风险前提和未执行验证；给出分支表、CI 链接、接续顺序与验收条件。
+
+本次没有修复应用代码，不能把上述条目标为已解决。先前 C6–C12 的解决状态还必须区分“已有修复分支”与“已进入 main”；尤其 C6 的 P1-02 修复只覆盖可解析 JSON 的 cursor，高水位对完全损坏尾行的保证仍有限。

@@ -346,3 +346,44 @@
   - 事件 POST 对 301/302/303/307/308 一律不跟随 `Location`，避免标准库把 `Authorization` 复制出去。会话 URL 仍只接受 `http://127.0.0.1`。
 - 验证：Linux（Python 3.12.3）上 `python -m unittest discover -s python/tests -v` 20 项通过，连续再跑 2 次仍通过。Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（27 项）、`pnpm build` 通过。Windows / macOS 与 Python 3.9 / 3.13 见本提交之后的 GitHub Actions。
 - 遗留：根 README 仍留给 P1-10。重定向期间当前事件按未分类状态重试，不记为 rejected。
+
+## P1-08 — 演示：`pnpm demo` 与 Node 模拟宿主
+
+- 日期：2026-09-23
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：
+  - 分支基于 P1-05（紧凑条才能显示「可能断开」），并合并 P1-03 的场景文件。`package.json` 保留 `schema:export`，并增加 `demo` 与 `demo:host`。
+  - `scripts/demo-host.mjs`：`--fast`、`--once`、`--home`、`--scenario`。等待会话文件和 `GET /health` 最多 20 秒。会话 URL 只接受 `http://127.0.0.1`。按 `index.json` 顺序播放；每个场景重写 `run_id`、`producer_id`、从 1 开始的 `sequence`、`event_id` 和 `occurred_at`。同一毫秒内的事件时间戳加 1 毫秒，避免序号字符串比较把终态排乱。事件间隔为 `delay_ms`，`--fast` 时为 0。`pause_after_index` 之后暂停 `pause_ms`（`--fast` 时为 0），暂停期间不另发心跳。`ECONNREFUSED` 和 401 重读会话并退避重试（200 ms 起，上限 5 秒）。400、409 以及其他 HTTP 错误打印后以退出码 1 结束。
+  - `scripts/launch.mjs`：`--demo` 把 `JEV_MONITOR_HOME` 设为 `.runtime/demo`；`--fresh` 先删掉该目录。Electron 启动后用同一环境启动演示宿主；Electron 退出时结束宿主，宿主非 0 退出时结束 Electron。
+- 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（43 项）、`pnpm build` 通过。`--fast --once` 在 15 秒内跑完 7 个场景，最终状态与 `index.json` 的 `expect` 一致。桌面窗口上的「可能断开」见本条之后的补充（若还没有，则尚未验证）。Windows / macOS 窗口未验证。
+- 遗留：README 未改。本分支包含尚未合并的 P1-03 与 P1-05，PR 基线是 P1-05 分支。`docs/PROTOCOL.md` 仍写着路径解析未实现，那是 P1-03 的原文，本切片不改。
+
+## P1-08 补充 — 审计修复：序号、回环、超时与断线录屏
+
+- 日期：2026-09-23
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：
+  - 每个场景新建 `producer_id`，该场景的 `sequence` 从 1 递增。同一 producer 不再把序号打回 1。
+  - 会话 URL 只接受 `http://127.0.0.1` 的 origin：拒绝用户名、密码、非根路径、查询和片段，保存 `url.origin`。
+  - `GET /health` 与 `POST /events` 都使用 `redirect: 'manual'`。健康检查把 3xx 当作未就绪；事件的 3xx 和其他非 401 状态打印后以退出码 1 结束，不访问重定向目标。
+  - 健康检查的单次请求用剩余截止时间做超时，20 秒到点就退出。事件 POST 超时 5 秒，超时后按连接失败重试。
+  - `occurred_at` 改为发送当时的时间。同一 producer 的先后由 `sequence` 决定。上一则里「加 1 毫秒以免序号字符串比较把终态排乱」不成立，本条更正。
+- 验证：Linux（Node 22.14.0、pnpm 11.19.0、Electron 42.11.6、`DISPLAY=:1`、X11；`XDG_SESSION_TYPE` 与 `WAYLAND_DISPLAY` 均为空）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（51 项）、`pnpm build` 通过。`pnpm demo` 放到 reconnect 暂停时，紧凑条先显示「N 秒无新事件」，随后变为「可能断开 · 最后更新 …」，暂停结束后连接恢复为「在线」（下一条场景「模拟：并发决策」）。录屏在 PR #11。Windows / macOS 窗口未验证。
+- 遗留：README 未改。本分支仍包含尚未合并的 P1-03 与 P1-05。
+
+## P1-08 补充 — `--fresh` 只删除仓库内的运行时目录
+
+- 日期：2026-09-23
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：
+  - `scripts/runtime-fresh.mjs`：`--fresh` 只允许删除本仓库的 `.runtime/dev` 或 `.runtime/demo`。删除前用 `lstat` 拒绝路径上的符号链接，再用 `realpath` 确认目标仍是这两个目录之一。对不上就抛错，不调用 `rm`。
+  - `scripts/launch.mjs`：目录按仓库根解析，不再用当前工作目录的 `path.resolve('.runtime/...')`，也不再删除继承来的 `JEV_MONITOR_HOME`。`pnpm demo` 把 `JEV_MONITOR_HOME` 和 `JEV_MONITOR_SESSION` 固定到 `.runtime/demo` 与其中的 `session.json`。未加 `--demo` 且已有外部 home 时，`--fresh` 拒绝删除并退出。
+  - `scripts/demo-host.mjs`：会话文件固定为 home 下的 `session.json`，不再读取继承的 `JEV_MONITOR_SESSION`。重定向、每个场景的序号和 20 秒就绪超时没有改。
+- 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（57 项）、`pnpm build` 通过。Windows / macOS 未在本机执行，交给 CI。未做桌面窗口验证。
+- 遗留：README 未改。本分支仍包含尚未合并的 P1-03 与 P1-05。

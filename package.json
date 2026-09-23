@@ -11,6 +11,8 @@
     "format:check": "prettier --check .",
     "build": "node scripts/build.mjs",
     "start": "node scripts/launch.mjs",
+    "demo": "node scripts/launch.mjs --demo --fresh",
+    "demo:host": "node scripts/demo-host.mjs",
     "schema:export": "tsx scripts/export-schema.ts"
   },
   "dependencies": {

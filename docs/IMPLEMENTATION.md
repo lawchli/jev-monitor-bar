@@ -80,3 +80,13 @@
 - 内容：按仓库所有者要求，model 字段只记厂商和模型系列、不写版本号（如 `claude-opus`、`gpt-sol`、`gpt-terra`）。更新 `AGENTS.md`、prompt、README 与实施记录模板。04 中的 `claude-opus-5.5` 按新规则应为 `claude-opus`，旧记录保留不改写。
 - 验证：纯文档改动；`pnpm typecheck` 与 `pnpm test` 仍通过。
 - 遗留：同 03。
+
+## 06 — 现状快照
+
+- 日期：2026-09-23
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：新增 `docs/STATUS.md`。记录 `main`（`cd99afb`，PR #1）上已有的 M0 / 部分 M1，以及 8 个未合并 draft PR 的切片、审计与 CI、建议合并顺序（#2 → #4 → #5 → #3 先 rebase → #9 → #6 → #7 → #8）。写明 P1-08 至 P1-10 等第一波合并后再开工，Windows / macOS 实机窗口行为仍未验证，以及模型分工（代码用 Grok 4.7 `grok-4.7-xhigh-fast`，规划用 Claude Opus 5.5 high，审计先 GPT 再 Claude）。未改应用代码，未合并任何 PR。
+- 验证：`git fetch origin main` 后 HEAD 为 `cd99afb`。`gh pr list` 显示 8 个开放 draft PR，相对 `main` 均为 MERGEABLE / CLEAN，检查结论 SUCCESS。临时 worktree 按建议顺序试合并（未推送）：#2、#4、#5 可依次合并；#3 随后在 `package.json` 与 `docs/IMPLEMENTATION.md` 冲突；#9、#6、#7、#8 接到 #2+#4+#5 上时只与 `docs/IMPLEMENTATION.md` 冲突。未跑 `pnpm typecheck` / `pnpm test`（本环境没有 `node_modules`，改动只有 Markdown）。
+- 遗留：8 个 PR 仍待合并；P1-08 至 P1-10 未开工；Windows / macOS 窗口行为未实机验证。里程碑表不改（这些切片还未进入 `main`）。

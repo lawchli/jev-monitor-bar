@@ -57,6 +57,24 @@ TERMINAL_REJECT = frozenset({400, 413})
 _HOST_UNSAFE = re.compile(r'[^A-Za-z0-9_.:/-]')
 _BACKOFF_START = 0.5
 _BACKOFF_MAX = 5.0
+# Same byte cap as the receiver (`Content-Length` / body > 64 KiB is 413).
+_MAX_EVENT_BYTES = 65536
+# Returned by `_post` when this event cannot be sent and must be dropped.
+_UNSENDABLE = object()
+
+
+class _RejectRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse every redirect on the event POST.
+
+    stdlib `HTTPRedirectHandler` turns 301/302/303 into a GET and copies
+    `Authorization` onto `Location`. A local service that redirects could
+    send the bearer token off this request. Missing `Location` is refused too.
+    """
+
+    def http_error_302(self, req, fp, code, msg, headers):
+        raise urllib.error.HTTPError(req.full_url, code, msg, headers, fp)
+
+    http_error_301 = http_error_303 = http_error_307 = http_error_308 = http_error_302
 
 
 def _now_iso() -> str:
@@ -86,6 +104,19 @@ def _producer_id(host_name: str) -> str:
 
 def _omit_none(payload: dict) -> dict:
     return {key: value for key, value in payload.items() if value is not None}
+
+
+def _encode_event(event: dict) -> bytes:
+    """JSON snapshot. Raises TypeError, ValueError, UnicodeError, or RecursionError."""
+    return json.dumps(event, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+
+
+def _snapshot_event(event: dict) -> bytes:
+    """Immutable UTF-8 JSON body, or raise if it cannot be sent."""
+    body = _encode_event(event)
+    if len(body) > _MAX_EVENT_BYTES:
+        raise ValueError('event exceeds 64 KiB')
+    return body
 
 
 def _loopback_origin(url: str) -> Optional[str]:
@@ -187,8 +218,9 @@ class MonitorSender:
         self._session_mtime = object()
         self._session: Optional[dict] = None
         self._logger = logging.getLogger('jev_monitor')
-        # Proxy bypass is extra defense. The session URL is also limited to 127.0.0.1.
-        self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        # Session URL is limited to 127.0.0.1. Also ignore proxies, and refuse
+        # redirects so Authorization is not copied to a Location.
+        self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _RejectRedirect)
         self._thread: Optional[threading.Thread] = None
         if enabled:
             self._thread = threading.Thread(target=self._loop, name='jev-monitor-sender', daemon=True)
@@ -439,26 +471,39 @@ class MonitorSender:
             'payload': body,
         }
         event.update(clean_ids)
+        encode_error = None
         with self._lock:
             if self._closed:
                 self._stats['dropped'] += 1
                 queued = False
                 overflow = False
             else:
-                self._sequence += 1
-                event['sequence'] = self._sequence
+                event['sequence'] = self._sequence + 1
                 try:
-                    self._queue.put_nowait(event)
-                    queued = True
-                    overflow = False
-                except queue.Full:
-                    self._sequence -= 1
+                    # Freeze nested objects here. A later mutation, a set, a cycle,
+                    # a lone surrogate, or a body over 64 KiB must not reach `_post`.
+                    raw = _snapshot_event(event)
+                except (TypeError, ValueError, RecursionError) as exc:
+                    encode_error = exc
                     self._stats['dropped'] += 1
-                    self._unreported += 1
                     queued = False
-                    overflow = True
+                    overflow = False
+                else:
+                    try:
+                        self._queue.put_nowait({'type': event_type, 'sequence': event['sequence'], 'body': raw})
+                        self._sequence += 1
+                        queued = True
+                        overflow = False
+                    except queue.Full:
+                        self._stats['dropped'] += 1
+                        self._unreported += 1
+                        queued = False
+                        overflow = True
         if queued:
             return True
+        if encode_error is not None:
+            self._logger.warning('dropped %s: %s', event_type, encode_error)
+            return False
         reason = 'queue full' if overflow else 'sender closed'
         self._logger.warning('dropped %s: %s', event_type, reason)
         return False
@@ -505,7 +550,21 @@ class MonitorSender:
                         continue
                 pending = event
                 kind = 'pending'
-            status = self._post(session, event)
+            try:
+                status = self._post(session, event)
+            except Exception:
+                self._logger.warning('dropping event after unexpected send error type=%s', event.get('type'), exc_info=True)
+                status = _UNSENDABLE
+            if status is _UNSENDABLE:
+                # A bad queued body must not end the worker. Drop it and keep going.
+                self._drop_unsendable(event)
+                if kind == 'telemetry':
+                    telemetry = None
+                else:
+                    pending = None
+                if event.get('type') == 'heartbeat':
+                    self._last_sent = time.monotonic()
+                continue
             if status == 200:
                 self._mark(sent=1)
                 self._set_offline(False)
@@ -588,8 +647,18 @@ class MonitorSender:
         self._session = _read_session(self.session_file) if mtime is not None else None
         return self._session
 
+    def _drop_unsendable(self, event: dict) -> None:
+        with self._lock:
+            self._stats['dropped'] += 1
+        self._logger.warning('dropped unsendable type=%s sequence=%s', event.get('type'), event.get('sequence'))
+
     def _post(self, session: dict, event: dict):
-        body = json.dumps(event, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+        body = event.get('body')
+        if not isinstance(body, bytes):
+            try:
+                body = _snapshot_event(event)
+            except (TypeError, ValueError, RecursionError):
+                return _UNSENDABLE
         request = urllib.request.Request(
             session['url'] + '/events',
             data=body,

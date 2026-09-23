@@ -175,3 +175,15 @@
   - 成功入队后被 409 或 400/413 拒绝的事件也计入下一条 `telemetry.dropped`。参数不合法、没有入队的调用仍然只计入 `stats().dropped`。`telemetry.dropped` 自己被拒绝时不再排下一条，避免死循环。
 - 验证：Linux（Python 3.12.3）上 `python -m unittest discover -s python/tests -v` 16 项通过。Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（27 项）、`pnpm build` 通过。Windows / macOS 见本提交之后的 GitHub Actions。
 - 遗留：根 README 仍留给 P1-10。`python/README.md` 写了参数范围和 URL 限制。序号可以先于积压事件到达这一点，审计认为接收端可以接受，本切片没有改。
+
+## P1-07 — 坏负载不终止发送线程，并拒绝重定向
+
+- 日期：2026-09-23
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：
+  - 入队前把事件编码成不可变的 UTF-8 JSON。`set`、循环引用、无法用 UTF-8 表示的字符串，或编码后大于 65536 字节（与接收端 64 KiB 上限相同）时丢弃该条，只计入 `dropped`，不占用序号，也不进入 `telemetry.dropped`。调用返回后再改 payload 不会改变已入队的字节。队列里若仍有无法编码的事件，工作线程丢掉该条并继续，而不是退出。
+  - 事件 POST 对 301/302/303/307/308 一律不跟随 `Location`，避免标准库把 `Authorization` 复制出去。会话 URL 仍只接受 `http://127.0.0.1`。
+- 验证：Linux（Python 3.12.3）上 `python -m unittest discover -s python/tests -v` 20 项通过，连续再跑 2 次仍通过。Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（27 项）、`pnpm build` 通过。Windows / macOS 与 Python 3.9 / 3.13 见本提交之后的 GitHub Actions。
+- 遗留：根 README 仍留给 P1-10。重定向期间当前事件按未分类状态重试，不记为 rejected。

@@ -10,13 +10,19 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from jev_monitor.sender import MonitorSender, _loopback_origin
+from jev_monitor.sender import MonitorSender, _encode_event, _loopback_origin, _snapshot_event
 
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = 'HTTP/1.1'
 
+    def do_GET(self):
+        self._receive()
+
     def do_POST(self):
+        self._receive()
+
+    def _receive(self):
         length = int(self.headers.get('Content-Length', '0') or 0)
         raw = self.rfile.read(length) if length else b''
         server = self.server
@@ -30,12 +36,16 @@ class Handler(BaseHTTPRequestHandler):
             event = None
         with server.lock:
             server.posts += 1
+            server.calls.append((self.command, self.path, auth))
             server.attempts.append(event)
             token_ok = auth == 'Bearer ' + server.token
             fail = server.fail_left > 0
             if fail:
                 server.fail_left -= 1
                 fail_code = server.fail_code
+        if server.mode == 'redirect':
+            self._send_redirect(server.redirect_code, server.redirect_to)
+            return
         if not token_ok:
             self._send(401, b'{"error":"unauthorized"}')
             return
@@ -60,6 +70,12 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_redirect(self, code, location):
+        self.send_response(code)
+        self.send_header('Location', location)
+        self.send_header('Content-Length', '0')
+        self.end_headers()
+
     def log_message(self, fmt, *args):
         return
 
@@ -72,9 +88,12 @@ class RecordingServer(ThreadingHTTPServer):
         super().__init__(('127.0.0.1', 0), Handler)
         self.events = []
         self.attempts = []
+        self.calls = []
         self.lock = threading.Lock()
         self.token = 'token'
         self.mode = 'ok'
+        self.redirect_code = 302
+        self.redirect_to = '/exfil'
         self.posts = 0
         self.fail_code = 400
         self.fail_left = 0
@@ -93,6 +112,10 @@ class RecordingServer(ThreadingHTTPServer):
     def attempt_snapshot(self):
         with self.lock:
             return list(self.attempts)
+
+    def call_snapshot(self):
+        with self.lock:
+            return list(self.calls)
 
     def stop(self):
         if self.release is not None:
@@ -129,6 +152,7 @@ class SenderTest(unittest.TestCase):
         self.tmp = tempfile.mkdtemp(prefix='jev-sender-')
         self.session_path = os.path.join(self.tmp, 'session.json')
         self.server = None
+        self.target = None
         self.sender = None
 
     def tearDown(self):
@@ -136,6 +160,8 @@ class SenderTest(unittest.TestCase):
             self.sender.close(timeout=0.5)
         if self.server is not None:
             self.server.stop()
+        if self.target is not None:
+            self.target.stop()
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def _start_server(self):
@@ -356,6 +382,113 @@ class SenderTest(unittest.TestCase):
         events = server.snapshot()
         self.assertEqual([event['payload']['completed'] for event in events], list(range(6)))
         self.assertEqual([event['sequence'] for event in events], list(range(1, 7)))
+
+    def test_bad_payload_does_not_stop_the_sender(self):
+        server = self._start_server()
+        self.sender = MonitorSender(session_file=self.session_path, heartbeat_interval=60)
+        cycle = {}
+        cycle['self'] = cycle
+        bad_payloads = (
+            {'tags': {1, 2}},
+            cycle,
+            {'summary': 'bad\ud800'},
+            {'summary': 'x' * 70000},
+        )
+        for payload in bad_payloads:
+            self.assertFalse(self.sender.emit('progress.updated', payload))
+        self.assertTrue(self.sender._thread.is_alive())
+        nested = {'n': 1}
+        self.assertTrue(self.sender.emit('progress.updated', {'summary': 'ok', 'nested': nested}))
+        nested['n'] = 2
+        self.assertTrue(wait_until(lambda: self.sender.stats()['sent'] == 1 and len(server.snapshot()) == 1, timeout=4))
+        event = server.snapshot()[0]
+        self.assertEqual(event['type'], 'progress.updated')
+        self.assertEqual(event['sequence'], 1)
+        self.assertEqual(event['payload'], {'summary': 'ok', 'nested': {'n': 1}})
+        self.assertEqual(self.sender.stats()['dropped'], len(bad_payloads))
+        self.assertEqual(self.sender.stats()['sent'], 1)
+        self.assertTrue(self.sender._thread.is_alive())
+        self.assertTrue(self.sender.emit('progress.updated', {'summary': 'later'}))
+        self.assertTrue(wait_until(lambda: len(server.snapshot()) == 2, timeout=4))
+        self.assertEqual(server.snapshot()[1]['payload']['summary'], 'later')
+        self.assertEqual(server.snapshot()[1]['sequence'], 2)
+
+    def test_unsendable_queued_event_does_not_stop_the_worker(self):
+        server = self._start_server()
+        self.sender = MonitorSender(session_file=self.session_path, heartbeat_interval=60)
+        self.sender._queue.put_nowait({'type': 'progress.updated', 'sequence': 99, 'payload': {'tags': {1}}})
+        self.assertTrue(self.sender.emit('progress.updated', {'summary': 'after'}))
+        self.assertTrue(
+            wait_until(
+                lambda: self.sender.stats()['sent'] == 1
+                and any(event['payload'].get('summary') == 'after' for event in server.snapshot()),
+                timeout=4,
+            )
+        )
+        self.assertTrue(self.sender._thread.is_alive())
+        events = server.snapshot()
+        self.assertEqual([event['payload'].get('summary') for event in events], ['after'])
+        self.assertEqual(events[0]['sequence'], 1)
+        self.assertEqual(self.sender.stats()['dropped'], 1)
+        self.assertEqual(self.sender.stats()['sent'], 1)
+
+    def test_snapshot_rejects_events_over_64kib(self):
+        under = {'payload': {'summary': ''}}
+        over = {'payload': {'summary': ''}}
+        low = 0
+        high = 70000
+        while low < high:
+            mid = (low + high) // 2
+            under['payload']['summary'] = 'a' * mid
+            if len(_encode_event(under)) <= 65536:
+                low = mid + 1
+            else:
+                high = mid
+        under['payload']['summary'] = 'a' * (low - 1)
+        over['payload']['summary'] = 'a' * low
+        self.assertLessEqual(len(_encode_event(under)), 65536)
+        self.assertGreater(len(_encode_event(over)), 65536)
+        self.assertEqual(_snapshot_event(under), _encode_event(under))
+        with self.assertRaises(ValueError):
+            _snapshot_event(over)
+
+    def test_event_post_does_not_follow_redirects(self):
+        server = self._start_server()
+        self.target = RecordingServer()
+        self.sender = MonitorSender(session_file=self.session_path, heartbeat_interval=60, timeout=0.5)
+        for index, code in enumerate((301, 302, 303, 307, 308)):
+            self.assertTrue(wait_until(lambda i=index: self.sender.stats()['sent'] == i, timeout=4))
+            server.mode = 'redirect'
+            server.redirect_code = code
+            if code == 302:
+                server.redirect_to = '/exfil'
+            else:
+                server.redirect_to = f'http://127.0.0.1:{self.target.port}/exfil'
+            summary = f'code-{code}'
+            before = server.posts
+            self.assertTrue(self.sender.emit('progress.updated', {'summary': summary}))
+            self.assertTrue(wait_until(lambda b=before: server.posts > b, timeout=4))
+            self.assertEqual(self.target.posts, 0)
+            self.assertEqual(self.target.call_snapshot(), [])
+            self.assertTrue(all(method == 'POST' and path == '/events' for method, path, _auth in server.call_snapshot()))
+            self.assertEqual(self.sender.stats()['sent'], index)
+            self.assertTrue(self.sender._thread.is_alive())
+            server.mode = 'ok'
+            self.assertTrue(
+                wait_until(
+                    lambda s=summary: any(event['payload'].get('summary') == s for event in server.snapshot()),
+                    timeout=6,
+                )
+            )
+        self.assertEqual(self.target.posts, 0)
+        self.assertTrue(wait_until(lambda: self.sender.stats()['sent'] == 5, timeout=4))
+        self.assertEqual(
+            [event['payload']['summary'] for event in server.snapshot()],
+            ['code-301', 'code-302', 'code-303', 'code-307', 'code-308'],
+        )
+        self.assertTrue(all(method == 'POST' and path == '/events' for method, path, _auth in server.call_snapshot()))
+        self.assertTrue(self.sender._thread.is_alive())
+        self.assertEqual(self.sender.stats()['sent'], 5)
 
     def test_invalid_emit_returns_false_without_raising(self):
         missing = os.path.join(self.tmp, 'missing', 'session.json')

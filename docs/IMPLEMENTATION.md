@@ -466,3 +466,16 @@
   - 里程碑表只把 M1 的文档更正和「A1–A9 未修、闭环验收未做」写进去。M5、原生 Windows、打包、Defender 仍是未完成。
 - 验证：对照 `src/store.ts`、`src/session.ts`、`src/paths.ts`、`src/protocol.ts`、`src/server.ts`、`python/jev_monitor/sender.py` 和 `tests/boundaries.test.ts` 核对句子。未改应用代码，未重跑 `pnpm typecheck` / `pnpm test`。未做进程重启、凭证轮换、队列补发的闭环验收，也未做 30 分钟负载、原生 Windows 窗口、打包或 Defender。三平台 CI 通过不等于原生窗口已验收。
 - 遗留：完全无法 `JSON.parse` 的尾行仍没有高水位。演示 reconnect 若只是停发几十秒，并不等于验证了进程重启、凭证轮换和队列补发。P1-00 的边界守卫只扫描 `src` 里的 TypeScript 字符串，不覆盖 Python 重定向，也不能证明发布包不联网。M5 未开始。原生 Windows、打包、Defender 未完成。A1–A9 未修。
+
+## 09 — 核对并补齐 Python 发送器 A2、A3 的验收断言
+
+- 日期：2026-09-23
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：起点 `8e1eb65`。`cc0981f` 已经在入队前做不可变 UTF-8 JSON、超过 65536 字节丢弃，并用 `_RejectRedirect` 拒绝 301/302/303/307/308。对照 A2、A3 验收后没有改 `python/jev_monitor/sender.py`，也没有改 `python/README.md`。这次新加的只有测试断言：
+  - `test_queue_overflow_counts_dropped`：离线且队列满之后，工作线程仍存活；再 `emit` 200 次都返回 false、计入 `dropped`，并且在 0.2 秒内返回。
+  - `test_event_post_does_not_follow_redirects`：相对 `Location`（302，`/exfil`）和绝对 `Location`（301/303/307/308，`http://127.0.0.1:<port>/exfil`）上，没有任何一次请求带 Bearer。原先的 `POST /events` 仍带会话 token。日志里出现 `retrying status=<code>`，用来确认投递失败被记下。
+  - 坏 payload（set、循环引用、无法用 UTF-8 编码的字符串）、emit 后修改嵌套对象、超大 body、队列里混入无法编码的事件，原有测试已经覆盖，这次没有改这些用例的预期。
+- 验证：Linux，系统 Python 3.12.3，`python3 -m unittest discover -s python/tests -v`，20 项通过（约 15 秒）。测试只访问 `127.0.0.1`。未跑 Python 3.9 / 3.13，未跑 Windows / macOS，未跑 `pnpm`。
+- 遗留：重定向仍按未分类状态重试，不记入 `rejected`。队列只限制条数和单条 64 KiB，没有队列总字节上限。丢弃时仍在调用线程打警告，慢日志 handler 仍可能拖住 `emit`。相对 Location 只在 302 上覆盖，绝对 Location 覆盖其余四个状态码。

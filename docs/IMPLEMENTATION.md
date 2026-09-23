@@ -533,3 +533,15 @@
   - 同一会话上用系统 Python 3.12.3 运行 `python python/examples/fake_host.py`（`JEV_MONITOR_HOME` 指向 `.runtime/demo`）。四个场景 `sent` 分别为 10、8、11、8，`dropped=0`，`offline=False`。事件文件里的 `producer_id` 前缀是 `fake-host-`，终态分别是 `run.completed`、`run.completed`、`run.completed`、`run.failed`。当时窗口仍停在先前手选的 run，没有自动改选到这四条。
   - 同一工作树在改这处断言之前，`pnpm format:check`、`pnpm typecheck`、`pnpm test`、`pnpm build`、`pnpm schema:export`（协议与 `event.schema.json` 无差异）和系统 Python 3.12 的 unittest 已通过。Python 3.9.25 与 3.13.15（uv）的 `unittest discover` 也已通过。本条只改 Python 测试的时限后，再跑 3.9、3.12、3.13 的 unittest。未把这次 Linux Electron 窗口写成 Windows 或 macOS 原生验收。
 - 遗留：A9 的 30 分钟负载、Windows 原生置顶与 DPI、打包、Defender 留到本分支合并之后。GitHub Actions 在 `b5d2897` 上全部作业未启动，注解是账户付款失败或支出上限，不是测试失败。`e5ca5c8` 的 Windows Python 3.13 失败就是上面的 0.2 秒断言。本条推送后的三平台 CI 以 Actions 为准；CI 通过也只表示 build、纯函数和 DOM，不是原生窗口已验收。`c7f46d0` 未合并。
+
+## 12 — 公开仓库后重跑 Actions 的方式
+
+- 日期：2026-09-23
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：仓库所有者已把 `lawchli/jev-monitor-bar` 改为 public。`8eb0e25` 的 push run `35820950738` 和 pull_request run `35820954146` 没有被重跑成功。当时 9 个作业都在 2–7 秒内失败，runner 为空，步骤为空，注解是账户付款失败或支出上限。本环境的 GitHub App 令牌没有 Administration，也没有 Actions 写权限：`gh run rerun` 和 `POST /repos/lawchli/jev-monitor-bar/actions/runs/35820950738/rerun` 都返回 403 `Resource not accessible by integration`。没有空提交。
+  - 重跑这两次旧 run 需要仓库所有者，或带 Actions 写权限的身份：`gh run rerun 35820950738 --repo lawchli/jev-monitor-bar`，以及 `gh run rerun 35820954146 --repo lawchli/jev-monitor-bar`。也可以在这两个 run 的页面上选择 Re-run all jobs。
+  - 本条 push 会按 `.github/workflows/ci.yml` 的 `push` 和 `pull_request` 再启动一次 ci。作业仍是 Windows、Ubuntu、macOS 的 core（`format:check`、`typecheck`、`test`、`build`）和 Python 3.9 / 3.13。
+- 验证：`gh repo view lawchli/jev-monitor-bar --json visibility,isPrivate` 得到 `visibility` 为 `PUBLIC`、`isPrivate` 为 false。重跑接口未执行成功。这次 push 之后的 CI 以 Actions 上的新 run 为准，本条不把它们写成已通过。
+- 遗留：A9 的 30 分钟负载、Windows 原生置顶与 DPI、打包、Defender 仍留到 PR #14 合并之后。PR #14 仍是 draft，未合并。CI 通过也只表示 build、纯函数和 DOM，不是原生窗口、30 分钟负载、打包或 Defender 已验收。

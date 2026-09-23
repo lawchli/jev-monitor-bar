@@ -197,3 +197,18 @@
   - `scripts/launch.mjs`：`--demo` 把 `JEV_MONITOR_HOME` 设为 `.runtime/demo`；`--fresh` 先删掉该目录。Electron 启动后用同一环境启动演示宿主；Electron 退出时结束宿主，宿主非 0 退出时结束 Electron。
 - 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（43 项）、`pnpm build` 通过。`--fast --once` 在 15 秒内跑完 7 个场景，最终状态与 `index.json` 的 `expect` 一致。桌面窗口上的「可能断开」见本条之后的补充（若还没有，则尚未验证）。Windows / macOS 窗口未验证。
 - 遗留：README 未改。本分支包含尚未合并的 P1-03 与 P1-05，PR 基线是 P1-05 分支。`docs/PROTOCOL.md` 仍写着路径解析未实现，那是 P1-03 的原文，本切片不改。
+
+## P1-08 补充 — 审计修复：序号、回环、超时与断线录屏
+
+- 日期：2026-09-23
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：
+  - 每个场景新建 `producer_id`，该场景的 `sequence` 从 1 递增。同一 producer 不再把序号打回 1。
+  - 会话 URL 只接受 `http://127.0.0.1` 的 origin：拒绝用户名、密码、非根路径、查询和片段，保存 `url.origin`。
+  - `GET /health` 与 `POST /events` 都使用 `redirect: 'manual'`。健康检查把 3xx 当作未就绪；事件的 3xx 和其他非 401 状态打印后以退出码 1 结束，不访问重定向目标。
+  - 健康检查的单次请求用剩余截止时间做超时，20 秒到点就退出。事件 POST 超时 5 秒，超时后按连接失败重试。
+  - `occurred_at` 改为发送当时的时间。同一 producer 的先后由 `sequence` 决定。上一则里「加 1 毫秒以免序号字符串比较把终态排乱」不成立，本条更正。
+- 验证：Linux（Node 22.14.0、pnpm 11.19.0、Electron 42.11.6、`DISPLAY=:1`、X11；`XDG_SESSION_TYPE` 与 `WAYLAND_DISPLAY` 均为空）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（51 项）、`pnpm build` 通过。`pnpm demo` 放到 reconnect 暂停时，紧凑条先显示「N 秒无新事件」，随后变为「可能断开 · 最后更新 …」，暂停结束后连接恢复为「在线」（下一条场景「模拟：并发决策」）。录屏在 PR #11。Windows / macOS 窗口未验证。
+- 遗留：README 未改。本分支仍包含尚未合并的 P1-03 与 P1-05。

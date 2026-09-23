@@ -27,31 +27,51 @@ if (!home) {
 const sessionFile = process.env.JEV_MONITOR_SESSION || path.join(home, 'session.json');
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+const readyTimeoutMs = 20_000;
+const eventTimeoutMs = 5_000;
+
 function readSession() {
   try {
     const parsed = JSON.parse(fs.readFileSync(sessionFile, 'utf8'));
     if (!parsed || typeof parsed.url !== 'string' || typeof parsed.token !== 'string') return undefined;
     const url = new URL(parsed.url);
     if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1') return undefined;
-    return {url: parsed.url.replace(/\/$/, ''), token: parsed.token};
+    if (url.username || url.password || url.pathname !== '/' || url.search || url.hash) return undefined;
+    return {url: url.origin, token: parsed.token};
   } catch {
     return undefined;
   }
 }
 
+function request(url, init, timeoutMs) {
+  return fetch(url, {...init, redirect: 'manual', signal: AbortSignal.timeout(timeoutMs)});
+}
+
 async function waitReady() {
-  const deadline = Date.now() + 20_000;
+  const deadline = Date.now() + readyTimeoutMs;
   while (Date.now() < deadline) {
     const session = readSession();
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
     if (session) {
       try {
-        const response = await fetch(`${session.url}/health`, {headers: {authorization: `Bearer ${session.token}`}});
-        if (response.ok) return session;
+        const response = await request(
+          `${session.url}/health`,
+          {headers: {authorization: `Bearer ${session.token}`}},
+          remaining,
+        );
+        if (response.ok) {
+          await response.body?.cancel();
+          return session;
+        }
+        await response.body?.cancel();
       } catch {
-        // Receiver is not up yet.
+        // Receiver is not up yet, or this attempt hit the readiness deadline.
       }
     }
-    await sleep(200);
+    const pause = Math.min(200, deadline - Date.now());
+    if (pause <= 0) break;
+    await sleep(pause);
   }
   console.error('receiver not ready within 20s');
   process.exit(1);
@@ -62,12 +82,19 @@ async function postEvent(sessionRef, body) {
   for (;;) {
     const session = sessionRef.current;
     try {
-      const response = await fetch(`${session.url}/events`, {
-        method: 'POST',
-        headers: {'content-type': 'application/json', authorization: `Bearer ${session.token}`},
-        body,
-      });
-      if (response.status === 200) return;
+      const response = await request(
+        `${session.url}/events`,
+        {
+          method: 'POST',
+          headers: {'content-type': 'application/json', authorization: `Bearer ${session.token}`},
+          body,
+        },
+        eventTimeoutMs,
+      );
+      if (response.status === 200) {
+        await response.body?.cancel();
+        return;
+      }
       const text = await response.text();
       if (response.status === 401) {
         const next = readSession();
@@ -85,14 +112,6 @@ async function postEvent(sessionRef, body) {
       delay = Math.min(delay * 2, 5_000);
     }
   }
-}
-
-let lastMs = 0;
-function stamp() {
-  let ms = Date.now();
-  if (ms <= lastMs) ms = lastMs + 1;
-  lastMs = ms;
-  return new Date(ms).toISOString();
 }
 
 function rewrite(event, runId, producerId, sequence, occurredAt) {
@@ -118,12 +137,12 @@ if (only) {
 }
 
 const sessionRef = {current: await waitReady()};
-const producerId = `demo-host-${process.pid}-${randomBytes(4).toString('hex')}`;
 let generation = 0;
 
 do {
   for (const scenario of scenarios) {
     generation += 1;
+    const producerId = `demo-host-${process.pid}-${randomBytes(4).toString('hex')}`;
     const runId = `demo-${scenario.id}-${Date.now().toString(36)}-${generation.toString(36)}`;
     const lines = fs
       .readFileSync(path.join(root, 'fixtures/scenarios', scenario.file), 'utf8')
@@ -131,7 +150,7 @@ do {
       .filter(Boolean);
     for (let index = 0; index < lines.length; index += 1) {
       if (index > 0) await sleep(fast ? 0 : scenario.delay_ms);
-      const event = rewrite(JSON.parse(lines[index]), runId, producerId, index + 1, stamp());
+      const event = rewrite(JSON.parse(lines[index]), runId, producerId, index + 1, new Date().toISOString());
       await postEvent(sessionRef, JSON.stringify(event));
       if (scenario.pause_after_index === index) await sleep(fast ? 0 : (scenario.pause_ms ?? 0));
     }

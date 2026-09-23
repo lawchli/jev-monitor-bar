@@ -15,6 +15,7 @@ export class EventStore extends EventEmitter {
   corruptLines = 0;
   private segment = 0;
   private segmentBytes = 0;
+  private droppedRuns = new Set<string>();
   constructor(
     public directory: string,
     public maxEvents = 20000,
@@ -85,6 +86,7 @@ export class EventStore extends EventEmitter {
       this.ids.delete(old.event_id);
       this.sequences.delete(this.seq(old));
       this.bytes -= Buffer.byteLength(JSON.stringify(old));
+      this.droppedRuns.add(old.run_id);
     }
   }
   ingest(raw: unknown) {
@@ -133,6 +135,12 @@ export class EventStore extends EventEmitter {
     });
     rows.sort((a, b) => a.cursor - b.cursor);
     return rows.slice(-limit);
+  }
+  /** An empty older page is missing events that were dropped from the memory window. */
+  historyTruncated(query: {runId?: string; beforeCursor?: number} = {}): boolean {
+    if (query.beforeCursor === undefined) return false;
+    if (query.runId !== undefined) return this.droppedRuns.has(query.runId);
+    return this.droppedRuns.size > 0;
   }
   exportLines() {
     return this.files()

@@ -172,3 +172,17 @@
   - 组件测试需要 DOM，因此用 `pnpm add -D jsdom` 增加开发依赖。运行时依赖没有变。
 - 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（38 通过）、`pnpm build` 通过。组件测试用延迟的 `page()`：切到另一个 run 并 resolve 后不出现原 run 的事件，切回去也不出现；同一次响应里别的 run 的事件被丢掉。Windows / macOS 窗口未验证。
 - 遗留：同上一则 P1-06。三平台 CI 见本 PR。
+
+## P1-06 — 选择不写成已执行，时间线窗口可前移
+
+- 日期：2026-09-23
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：
+  - 决策链不再把仅有的 `action.selected` 写成「实际执行」。只选定为「应用选择/待执行」；有 `action.started` 才写「执行中」；`action.completed` 且尚未验证写「已执行待验证」；失败与取消分别写「执行失败」「执行取消」。验证结果只在有 `verification.completed` 时追加。上一则里「同值规则只保留实际执行」由此改为「应用选择/待执行」。
+  - `source: application` 且与 Choice 不同时写「应用覆盖为 B」，不写规则名或来源。与 Choice 相同则不写覆盖。`source: rule` 且动作不同时仍写「规则覆盖为 B（规则 X · 来源 Y）」。
+  - 时间线仍最多渲染 500 条。跟随最新时窗口在末尾；「加载更早」先在已加载事件里把窗口前移，到已加载的起点才向 `page()` 要更早的 100 条。暂停跟随时记住当前视口里的事件，之后的快照即使不再包含这些行，视口和已选详情也不跳走。回到最新后继续跟随末尾。
+  - `page` 的 IPC 结果改为 `{events, truncated}`。该 run 的事件曾被移出内存窗口，且这次更早分页为空时，`truncated` 为 true，按钮写「更早的事件已超出保留窗口」。没有淘汰时仍写「没有更早的事件」。无效分页参数在没有 store 时照样拒绝。
+- 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（45 通过）、`pnpm build` 通过。组件测试：1200 条已在内存时两次「加载更早」能看到第 1 条且期间不调用 `page()`；快照只给最后 400 条时连续分页能看到第 1 条，渲染数不超过 500。暂停后把 props 换成后 600 条，原视口与选中 JSON 仍在，按钮为「已暂停跟随 · 600 条新事件」；回到最新后跟随到 cursor 1200。空分页在 `truncated: true` 时不写「没有更早的事件」。未再启动 Electron 窗口。Windows / macOS 未在本机执行。
+- 遗留：上一则 P1-06 的连接状态、决策链空格和 README 未改。三平台 CI 见本 PR。

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {createMonitorHandlers, type IpcSender, type RendererContents} from '../src/main/ipc-api';
 import {EventStore} from '../src/store';
 
 const tempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'jev-page-'));
@@ -71,4 +72,68 @@ test('page reads only the in-memory window', () => {
     store.page({limit: 500}).map(row => row.cursor),
     [3, 4, 5],
   );
+});
+
+test('an empty older page is truncated only after that run dropped events', () => {
+  const store = new EventStore(tempDir(), 3);
+  fill(store, 5);
+  assert.deepEqual(
+    store.page({runId: 'run-1', beforeCursor: 3, limit: 100}).map(row => row.cursor),
+    [],
+  );
+  assert.equal(store.historyTruncated({runId: 'run-1', beforeCursor: 3}), true);
+  assert.equal(store.historyTruncated({beforeCursor: undefined}), false);
+
+  const kept = new EventStore(tempDir());
+  fill(kept, 4, 'run-b');
+  assert.deepEqual(
+    kept.page({runId: 'run-b', beforeCursor: 1}).map(row => row.cursor),
+    [],
+  );
+  assert.equal(kept.historyTruncated({runId: 'run-b', beforeCursor: 1}), false);
+
+  const mixed = new EventStore(tempDir(), 3);
+  fill(mixed, 2, 'run-a');
+  fill(mixed, 2, 'run-b');
+  assert.equal(mixed.historyTruncated({runId: 'run-a', beforeCursor: 2}), true);
+  assert.equal(mixed.historyTruncated({runId: 'run-b', beforeCursor: 3}), false);
+});
+
+test('page IPC marks an empty older page truncated after eviction', () => {
+  const frame = {url: 'file:///renderer/index.html'};
+  const contents: RendererContents = {mainFrame: frame};
+  const dropped = new EventStore(tempDir(), 3);
+  fill(dropped, 5);
+  const handlers = createMonitorHandlers({
+    store: dropped,
+    controller: {setMode: mode => mode, setPinned: pinned => pinned},
+    getStatus: () => {
+      throw new Error('unused');
+    },
+    rendererUrl: frame.url,
+    contents,
+  });
+  const event: IpcSender = {sender: contents, senderFrame: frame};
+  assert.deepEqual(handlers.page(event, {runId: 'run-1', beforeCursor: 3, limit: 100}), {
+    events: [],
+    truncated: true,
+  });
+  assert.equal(handlers.page(event, {limit: 10}).truncated, false);
+  assert.deepEqual(
+    handlers.page(event, {limit: 10}).events.map(row => row.cursor),
+    [3, 4, 5],
+  );
+
+  const kept = new EventStore(tempDir());
+  fill(kept, 4, 'run-b');
+  const open = createMonitorHandlers({
+    store: kept,
+    controller: {setMode: mode => mode, setPinned: pinned => pinned},
+    getStatus: () => {
+      throw new Error('unused');
+    },
+    rendererUrl: frame.url,
+    contents,
+  });
+  assert.deepEqual(open.page(event, {runId: 'run-b', beforeCursor: 1}), {events: [], truncated: false});
 });

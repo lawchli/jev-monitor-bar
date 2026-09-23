@@ -67,7 +67,7 @@ test('storage initialization failure still serves an empty snapshot and storageE
   assert.ok(code === 'EEXIST' || code === 'ENOTDIR', code);
   const {handlers, event} = boundHandlers(failure.message);
   assert.deepEqual(handlers.snapshot(event), {cursor: 0, runs: [], events: [], corruptLines: 0});
-  assert.deepEqual(handlers.page(event, {}), []);
+  assert.deepEqual(handlers.page(event, {}), {events: [], truncated: false});
   assert.equal(handlers.status(event).storageError, failure.message);
   assert.equal(handlers.status(event).url, undefined);
   assert.throws(() => handlers.snapshot(event, 1), /Invalid runId/);

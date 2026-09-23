@@ -27,6 +27,12 @@ export interface PageQuery {
   limit?: number;
 }
 
+export interface EventPage {
+  events: StoredEvent[];
+  /** True when nothing older remains in memory because earlier events were dropped. */
+  truncated: boolean;
+}
+
 export interface PlatformInfo {
   os: 'windows' | 'macos' | 'linux-x11' | 'linux-wayland' | 'other';
   arch: string;
@@ -54,7 +60,7 @@ export interface Changed {
 
 export interface MonitorBridge {
   snapshot(runId?: string): Promise<Snapshot>;
-  page(query: PageQuery): Promise<StoredEvent[]>;
+  page(query: PageQuery): Promise<EventPage>;
   status(): Promise<ReceiverStatus>;
   onChanged(listener: (change: Changed) => void): () => void;
   setMode(mode: WindowMode): Promise<WindowMode>;

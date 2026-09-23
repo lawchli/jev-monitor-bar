@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import {deleteFreshRuntime} from './fresh-runtime.mjs';
 
 const DEV_RELATIVE = path.join('.runtime', 'dev');
 const DEMO_RELATIVE = path.join('.runtime', 'demo');
@@ -72,5 +73,5 @@ export function removeFreshRuntime(repoRoot, target) {
   const expectedReal = path.resolve(realRoot, ...relative.split(path.sep));
   if (!samePath(expectedReal, realTarget)) throw new Error(`refusing to delete ${realTarget}`);
 
-  fs.rmSync(resolved, {recursive: true, force: true});
+  deleteFreshRuntime(resolved, root);
 }

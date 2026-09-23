@@ -212,7 +212,9 @@ test('accepts the runtime directory through a symlink to the repository root', a
 
 test('launch.mjs deletes through the runtime guard', () => {
   const source = fs.readFileSync(path.join(__dirname, '../scripts/launch.mjs'), 'utf8');
+  assert.match(source, /freshRuntimeTarget\(env,\s*\{demo,\s*repoRoot\}\)/);
   assert.match(source, /deleteFreshRuntime\(\s*home,\s*repoRoot\s*\)/);
+  assert.doesNotMatch(source, /removeFreshRuntime\s*\(/);
   assert.doesNotMatch(source, /rmSync\s*\(/);
 });
 

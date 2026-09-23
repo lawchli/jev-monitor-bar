@@ -2,7 +2,7 @@ import {spawn} from 'node:child_process';
 import {createRequire} from 'node:module';
 import path from 'node:path';
 import {deleteFreshRuntime} from './fresh-runtime.mjs';
-import {applyLaunchEnv, freshRuntimeTarget, removeFreshRuntime} from './runtime-fresh.mjs';
+import {applyLaunchEnv, freshRuntimeTarget} from './runtime-fresh.mjs';
 
 const require = createRequire(import.meta.url);
 const args = process.argv.slice(2);
@@ -16,9 +16,9 @@ const env = applyLaunchEnv(process.env, {demo, repoRoot});
 const home = env.JEV_MONITOR_HOME;
 if (fresh) {
   try {
-    // Two guards stay side by side until they are folded into one helper.
-    // freshRuntimeTarget refuses a custom home; both removers refuse outward symlinks.
-    removeFreshRuntime(repoRoot, freshRuntimeTarget(env, {demo, repoRoot}));
+    // Custom homes are refused before the single delete. That delete rejects
+    // symlinks on the path, then checks realpath against this repo's dev/demo runtime.
+    freshRuntimeTarget(env, {demo, repoRoot});
     deleteFreshRuntime(home, repoRoot);
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));

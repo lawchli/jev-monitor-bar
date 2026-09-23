@@ -452,3 +452,13 @@
   - 仓库里原来没有 `docs/STATUS.md`。放入 `9537853` 的历史快照，并在文末追加更正：快照里「8 个 PR、P1-08/09 未开工」只代表写入当时，不能当派工依据。快照原文未删。
 - 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm install` 报告锁文件已一致；`pnpm typecheck` 通过；`pnpm test` 116 项通过；`pnpm format:check` 通过。同一台机器 Python 3.12.3 上 `python -m unittest discover -s python/tests` 20 项通过。未跑 Python 3.9 / 3.13。未做原生 Windows / macOS 窗口、可见延迟、30 分钟负载、打包或 Defender。三平台 CI 以本提交推送后的 Actions 为准。
 - 遗留：A1–A10 未修。`--fresh` 两套实现并存。M5 未开始。原生 Windows、打包、Defender 未完成。
+
+## A8 — 收成一份 --fresh
+
+- 日期：2026-09-23
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：启动只删除一次，两套保护都还在。`freshRuntimeTarget` 先拒绝和本次目标不一致的自定义 `JEV_MONITOR_HOME`，不删除仓库外的目录。通过后只调用 `deleteFreshRuntime`：删除前用 `lstat` 拒绝路径上的符号链接，再用 `realpath` 确认目标是本仓库 `.runtime/dev` 或 `.runtime/demo`。对不上就抛错，不调用 `rm`。指向仓库外的符号链接和它外面的目录都保持原样。`removeFreshRuntime` 仍按原词法路径和符号链接规则拒绝，实际删除改为调用 `deleteFreshRuntime`。`applyLaunchEnv` 不变：`pnpm demo` 只在返回给子进程的环境里把 `JEV_MONITOR_HOME` 和 `JEV_MONITOR_SESSION` 设到 `.runtime/demo` 与其中的 `session.json`，不改写原来的外部会话文件。普通 `pnpm demo`（带 `--fresh`）仍会清掉仓库内 `.runtime/demo` 再启动。
+- 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm typecheck` 通过；`pnpm exec tsx --test tests/launch-fresh.test.ts tests/runtime-fresh.test.ts tests/demo-host.test.ts` 24 项通过。未做 Windows / macOS。
+- 遗留：符号链接检查与删除之间仍有替换窗口。A1–A7、A9、A10 未在本分支处理。

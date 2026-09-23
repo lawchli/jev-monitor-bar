@@ -301,3 +301,48 @@
   - 组件测试需要 DOM，因此用 `pnpm add -D jsdom` 增加开发依赖。运行时依赖没有变。
 - 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（38 通过）、`pnpm build` 通过。组件测试用延迟的 `page()`：切到另一个 run 并 resolve 后不出现原 run 的事件，切回去也不出现；同一次响应里别的 run 的事件被丢掉。Windows / macOS 窗口未验证。
 - 遗留：同上一则 P1-06。三平台 CI 见本 PR。
+
+## P1-07 — Python 发送器（仅标准库）
+
+- 日期：2026-09-22
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：
+  - `python/jev_monitor/paths.py` 的 `resolve_paths` 与 `src/paths.ts` 使用同一套规则，并复用 `tests/fixtures/paths-cases.json`。`win32` 用 `ntpath`，其他平台用 `posixpath`。返回 `home`、`events_dir`、`session_file`、`window_state_file`。
+  - `MonitorSender` 只用标准库。`emit` 用 `put_nowait`，不阻塞、不抛异常。后台守护线程按会话文件发送；401、连接失败或没有会话时保留当前事件，从 0.5 秒起翻倍退避，上限 5 秒。409 记为 conflict 和 dropped 并告警，不重试。400 与 413 记为 rejected 和 dropped。队列满时丢弃并计入 `telemetry.dropped`，恢复后先发这条再发积压事件。超过 `heartbeat_interval` 没有成功发送时自动发 `heartbeat`。`close` 在超时内尽量发完，支持 `with`。`enabled=False` 时方法为空操作。
+  - `python/examples/fake_host.py` 依次发送正常完成、规则覆盖、失败后重试、验证失败四个模拟运行，名称都以「模拟：」开头。
+  - CI 新增 `python` job：`windows-latest` / `ubuntu-latest` / `macos-latest` × Python 3.9 / 3.13，运行 `python -m unittest discover -s python/tests -v`。
+- 验证：
+  - Linux（Python 3.12.3）上 `python -m unittest discover -s python/tests -v` 11 项通过，连续再跑 5 次仍通过。没有接收端时 1000 次 `emit` 约 6–18 ms。
+  - Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（21 项）、`pnpm build` 通过。
+  - 同一台 Linux 上用真实 `EventStore` + `startServer` 跑 `fake_host.py`：4 个运行共 37 条事件全部 `sent`，状态为 completed、completed、completed、failed，且 `simulated` 为 true。
+  - Linux VM（`DISPLAY=:1`、Electron 42.11.6、X11）上 `pnpm start` 后运行 `JEV_MONITOR_HOME=.runtime/dev python3 python/examples/fake_host.py`。窗口从「运行数 0 / 最新事件 无 / 监听 是」变为「运行数 4 / 最新事件 run.failed / 监听 是」。
+  - 本机没有 Python 3.9。Windows / macOS 未在本机执行，见本 PR 的 GitHub Actions。
+- 遗留：根 README 未改（留给 P1-10）。规格没写明的 HTTP 状态码按连接失败重试，见 PR「需要协调」。Python 3.9 在 `macos-latest` 上能否装上，以 CI 为准。
+
+## P1-07 — 会话 URL 只允许 127.0.0.1
+
+- 日期：2026-09-22
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：
+  - rebase 到 `c5a3a18`。实施记录保留 P1-01 的窗口生命周期更正和上一则 P1-07。
+  - 会话 `url` 必须是 `http://127.0.0.1` 或带合法端口的同一主机，路径只能为空或 `/`。带用户名、查询串、片段、其他路径、`localhost`、IPv6 或其他主机都视为离线，不发请求。上一则里「忽略代理」仍保留，作为额外限制。
+  - `queue_size` 必须是大于等于 1 的整数，`timeout` 和 `heartbeat_interval` 必须大于 0，否则构造时抛出 `ValueError`。不再把非正队列静默变成全部丢弃。
+  - 成功入队后被 409 或 400/413 拒绝的事件也计入下一条 `telemetry.dropped`。参数不合法、没有入队的调用仍然只计入 `stats().dropped`。`telemetry.dropped` 自己被拒绝时不再排下一条，避免死循环。
+- 验证：Linux（Python 3.12.3）上 `python -m unittest discover -s python/tests -v` 16 项通过。Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（27 项）、`pnpm build` 通过。Windows / macOS 见本提交之后的 GitHub Actions。
+- 遗留：根 README 仍留给 P1-10。`python/README.md` 写了参数范围和 URL 限制。序号可以先于积压事件到达这一点，审计认为接收端可以接受，本切片没有改。
+
+## P1-07 — 坏负载不终止发送线程，并拒绝重定向
+
+- 日期：2026-09-23
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：
+  - 入队前把事件编码成不可变的 UTF-8 JSON。`set`、循环引用、无法用 UTF-8 表示的字符串，或编码后大于 65536 字节（与接收端 64 KiB 上限相同）时丢弃该条，只计入 `dropped`，不占用序号，也不进入 `telemetry.dropped`。调用返回后再改 payload 不会改变已入队的字节。队列里若仍有无法编码的事件，工作线程丢掉该条并继续，而不是退出。
+  - 事件 POST 对 301/302/303/307/308 一律不跟随 `Location`，避免标准库把 `Authorization` 复制出去。会话 URL 仍只接受 `http://127.0.0.1`。
+- 验证：Linux（Python 3.12.3）上 `python -m unittest discover -s python/tests -v` 20 项通过，连续再跑 2 次仍通过。Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（27 项）、`pnpm build` 通过。Windows / macOS 与 Python 3.9 / 3.13 见本提交之后的 GitHub Actions。
+- 遗留：根 README 仍留给 P1-10。重定向期间当前事件按未分类状态重试，不记为 rejected。

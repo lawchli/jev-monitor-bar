@@ -1,16 +1,17 @@
 import {useEffect, useMemo, useState} from 'react';
 import type {MonitorBridge, ReplayData} from '../../ipc';
-import {fileBase, replaySnapshot} from '../../replay';
+import {fileBase, pageReplay, replaySnapshot} from '../../replay';
 import {DecisionsTab} from '../expanded/DecisionsTab';
 import {ExecutionTab} from '../expanded/ExecutionTab';
 import {TimelineTab} from '../expanded/TimelineTab';
 import {attemptGroups, decisionCards, laterAttemptKeys, runSummary} from '../expanded/model';
-import {statusText, truncate} from '../view-model/common';
+import {pickDefaultRun, statusText, truncate} from '../view-model/common';
 
 type TabId = 'decisions' | 'execution' | 'timeline';
 type Speed = 1 | 10;
 
 const stepMs: Record<Speed, number> = {1: 800, 10: 80};
+const timelineTail = 400;
 
 export function ReplayView({replay, now, onExit}: {replay: ReplayData; now: number; onExit(): void}) {
   const [index, setIndex] = useState(replay.events.length);
@@ -21,6 +22,7 @@ export function ReplayView({replay, now, onExit}: {replay: ReplayData; now: numb
   const snapshot = useMemo(() => replaySnapshot(replay.events, index, runId), [replay.events, index, runId]);
   const run = snapshot.run;
   const summary = run ? runSummary(run, now) : undefined;
+  const selectedRunId = run?.id ?? pickDefaultRun(snapshot.runs)?.id ?? '';
   const name = fileBase(replay.file);
 
   useEffect(() => {
@@ -38,7 +40,7 @@ export function ReplayView({replay, now, onExit}: {replay: ReplayData; now: numb
   const pageBridge = useMemo<MonitorBridge>(
     () => ({
       snapshot: async () => snapshot,
-      page: async () => [],
+      page: async query => pageReplay(replay.events, index, query),
       status: async () => {
         throw new Error('回放不读取实时状态');
       },
@@ -48,7 +50,7 @@ export function ReplayView({replay, now, onExit}: {replay: ReplayData; now: numb
       exportEvents: async () => ({saved: false}),
       openReplay: async () => null,
     }),
-    [snapshot],
+    [snapshot, replay.events, index],
   );
 
   function pauseAt(next: number) {
@@ -104,28 +106,31 @@ export function ReplayView({replay, now, onExit}: {replay: ReplayData; now: numb
           退出回放
         </button>
       </div>
+      {snapshot.runs.length > 0 ? (
+        <header className="expanded-header">
+          <label className="run-picker">
+            <span className="sr-only">运行</span>
+            <select
+              data-testid="replay-run-picker"
+              value={selectedRunId}
+              onChange={event => {
+                setPlaying(false);
+                setRunId(event.target.value);
+              }}
+            >
+              {snapshot.runs.map(item => (
+                <option key={item.id} value={item.id}>
+                  {truncate(item.name, 24)} · {statusText(item.status)}
+                </option>
+              ))}
+            </select>
+          </label>
+        </header>
+      ) : null}
       {!run || !summary ? (
         <p className="expanded-empty">尚未回放到事件</p>
       ) : (
         <>
-          <header className="expanded-header">
-            <label className="run-picker">
-              <span className="sr-only">运行</span>
-              <select
-                value={run.id}
-                onChange={event => {
-                  setPlaying(false);
-                  setRunId(event.target.value);
-                }}
-              >
-                {snapshot.runs.map(item => (
-                  <option key={item.id} value={item.id}>
-                    {truncate(item.name, 24)} · {statusText(item.status)}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </header>
           <h1 className="run-name" title={summary.name}>
             {truncate(summary.name, 40)}
             {summary.simulated ? <span className="badge">模拟数据</span> : null}
@@ -151,7 +156,7 @@ export function ReplayView({replay, now, onExit}: {replay: ReplayData; now: numb
             {tab === 'execution' ? <ExecutionTab groups={attemptGroups(run)} /> : null}
             {tab === 'timeline' ? (
               <TimelineTab
-                events={snapshot.events}
+                events={snapshot.events.slice(-timelineTail)}
                 runId={run.id}
                 bridge={pageBridge}
                 retryKeys={laterAttemptKeys(run)}

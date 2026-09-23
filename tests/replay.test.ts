@@ -10,7 +10,7 @@ import type {ReplayData} from '../src/ipc';
 import {createMonitorHandlers, type IpcSender, type RendererContents, type ReplayFileIO} from '../src/main/ipc-api';
 import {validateEvent, type StoredEvent} from '../src/protocol';
 import {sanitizeEvent} from '../src/redact';
-import {REPLAY_EVENT_LIMIT, exportFileName, parseReplay, replaySnapshot} from '../src/replay';
+import {REPLAY_EVENT_LIMIT, exportFileName, pageReplay, parseReplay, replaySnapshot} from '../src/replay';
 import {ReplayView} from '../src/renderer/replay/ReplayView';
 import {EventStore} from '../src/store';
 
@@ -49,6 +49,32 @@ test('parseReplay accepts CRLF, stored rows, and plain events', () => {
   assert.equal('diagnostic' in parsed.events[0].payload, false);
   assert.equal(parsed.events[1].cursor, 40);
   assert.equal(parsed.events[1].received_at, '2026-01-01T00:00:02.000Z');
+});
+
+test('parseReplay rejects a present invalid cursor or received_at', () => {
+  const text = [
+    monitorLine(1, {cursor: 1.5}),
+    monitorLine(2, {received_at: 12345}),
+    monitorLine(3, {received_at: ''}),
+    monitorLine(4, {cursor: -3}),
+    monitorLine(5),
+  ].join('\n');
+  const parsed = parseReplay(text, parsers);
+  assert.equal(parsed.invalidLines, 2);
+  assert.equal(parsed.events.length, 3);
+  assert.equal(parsed.events[0].cursor, 3);
+  assert.equal(parsed.events[0].received_at, '');
+  assert.equal(parsed.events[1].cursor, -3);
+  assert.equal(parsed.events[1].received_at, parsed.events[1].occurred_at);
+  assert.equal(parsed.events[2].cursor, 5);
+  assert.equal(parsed.events[2].received_at, parsed.events[2].occurred_at);
+
+  const colliding = parseReplay(`${monitorLine(1)}\n${monitorLine(2, {cursor: 1})}`, parsers);
+  assert.equal(colliding.invalidLines, 0);
+  assert.deepEqual(
+    colliding.events.map(event => event.cursor),
+    [1, 1],
+  );
 });
 
 test('parseReplay keeps at most 20000 events', () => {
@@ -106,6 +132,89 @@ test('replaying the first N events matches an EventStore loaded with those rows'
   assert.deepEqual(replaySnapshot(parsed.events, 2, 'run-1').run, partial.snapshot('run-1').run);
   assert.equal(replaySnapshot(parsed.events, 2, 'run-1').run?.status, 'waiting');
   assert.equal(store.snapshot('run-1').run?.status, 'completed');
+});
+
+function storedRun(index: number): StoredEvent {
+  const n = index + 1;
+  const occurred = '2026-01-01T00:00:01.000Z';
+  return {
+    schema_version: 1,
+    event_id: `e${n}`,
+    run_id: `run-${String(n).padStart(3, '0')}`,
+    producer_id: 'host-1',
+    sequence: 1,
+    occurred_at: occurred,
+    type: 'run.started',
+    payload: {name: `任务${n}`},
+    received_at: occurred,
+    cursor: n,
+  };
+}
+
+test('a replay longer than 200 runs keeps focus on a surviving run', () => {
+  const events = Array.from({length: 201}, (_item, index) => storedRun(index));
+  const opened = replaySnapshot(events, events.length);
+  assert.equal(opened.runs.length, 200);
+  assert.ok(opened.run);
+  assert.equal(
+    opened.runs.some(run => run.id === opened.run?.id),
+    true,
+  );
+  assert.equal(opened.run?.id, 'run-201');
+  assert.equal(
+    opened.runs.some(run => run.id === 'run-001'),
+    false,
+  );
+
+  const evicted = replaySnapshot(events, events.length, 'run-001');
+  assert.equal(evicted.run, undefined);
+  assert.equal(evicted.runs.length, 200);
+  assert.equal(
+    evicted.events.every(event => event.run_id === 'run-001'),
+    false,
+  );
+  assert.equal(
+    evicted.events.some(event => event.run_id === 'run-201'),
+    true,
+  );
+});
+
+function heartbeat(cursor: number, runId = 'run-1'): StoredEvent {
+  const occurred = new Date(Date.UTC(2026, 0, 1, 0, 0, cursor % 60)).toISOString();
+  return {
+    schema_version: 1,
+    event_id: `${runId}-${cursor}`,
+    run_id: runId,
+    producer_id: 'host-1',
+    sequence: cursor,
+    occurred_at: occurred,
+    type: 'heartbeat',
+    payload: {},
+    received_at: occurred,
+    cursor,
+  };
+}
+
+test('pageReplay reads earlier rows from the replay prefix', () => {
+  const events = Array.from({length: 450}, (_item, index) => heartbeat(index + 1));
+  const tailStart = events.slice(-400)[0]?.cursor;
+  assert.equal(tailStart, 51);
+  assert.deepEqual(
+    pageReplay(events, events.length, {runId: 'run-1', beforeCursor: tailStart, limit: 100}).map(event => event.cursor),
+    Array.from({length: 50}, (_item, index) => index + 1),
+  );
+  assert.deepEqual(
+    pageReplay(events, 40, {runId: 'run-1', beforeCursor: 30, limit: 100}).map(event => event.cursor),
+    Array.from({length: 29}, (_item, index) => index + 1),
+  );
+  assert.deepEqual(
+    pageReplay(events, events.length, {runId: 'run-2', beforeCursor: 100}).map(event => event.cursor),
+    [],
+  );
+  assert.deepEqual(pageReplay(events, events.length, {runId: 'run-1', beforeCursor: 1}), []);
+  const wide = Array.from({length: 600}, (_item, index) => heartbeat(index + 1));
+  assert.equal(pageReplay(wide, wide.length, {limit: 0}).length, 1);
+  assert.equal(pageReplay(wide, wide.length, {limit: 900}).length, 500);
 });
 
 test('export and open replay stay inside the monitor window', async () => {
@@ -254,4 +363,133 @@ test('replay controls step through events without calling the live bridge', asyn
     globals.Node = previous.Node;
     globals.IS_REACT_ACT_ENVIRONMENT = previous.IS_REACT_ACT_ENVIRONMENT;
   }
+});
+
+async function renderReplay(replay: ReplayData, check: (dom: JSDOM) => Promise<void>) {
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');
+  type ActGlobal = typeof globalThis & {IS_REACT_ACT_ENVIRONMENT?: boolean};
+  const globals = globalThis as ActGlobal;
+  const previous = {
+    window: globals.window,
+    document: globals.document,
+    HTMLElement: globals.HTMLElement,
+    Node: globals.Node,
+    IS_REACT_ACT_ENVIRONMENT: globals.IS_REACT_ACT_ENVIRONMENT,
+  };
+  globals.window = dom.window as unknown as ActGlobal['window'];
+  globals.document = dom.window.document;
+  globals.HTMLElement = dom.window.HTMLElement;
+  globals.Node = dom.window.Node;
+  globals.IS_REACT_ACT_ENVIRONMENT = true;
+  const rootElement = dom.window.document.getElementById('root');
+  assert.ok(rootElement);
+  let root: Root | undefined;
+  const render = (node: ReactElement) => {
+    root ??= createRoot(rootElement);
+    root.render(node);
+  };
+  try {
+    await act(async () => {
+      render(createElement(ReplayView, {replay, now: Date.parse('2026-01-01T00:00:01.000Z'), onExit: () => {}}));
+    });
+    await check(dom);
+  } finally {
+    await act(async () => {
+      root?.unmount();
+    });
+    dom.window.close();
+    globals.window = previous.window;
+    globals.document = previous.document;
+    globals.HTMLElement = previous.HTMLElement;
+    globals.Node = previous.Node;
+    globals.IS_REACT_ACT_ENVIRONMENT = previous.IS_REACT_ACT_ENVIRONMENT;
+  }
+}
+
+test('opening more than 200 runs still shows the run picker', async () => {
+  const events = Array.from({length: 201}, (_item, index) => storedRun(index));
+  const replay: ReplayData = {
+    file: '/tmp/many-runs.jsonl',
+    invalidLines: 0,
+    truncated: false,
+    events,
+  };
+  await renderReplay(replay, async dom => {
+    const picker = () =>
+      dom.window.document.querySelector('[data-testid="replay-run-picker"]') as HTMLSelectElement | null;
+    const text = () => dom.window.document.body.textContent ?? '';
+    assert.ok(picker());
+    assert.equal(picker()?.options.length, 200);
+    assert.equal(picker()?.value, 'run-201');
+    assert.equal(text().includes('任务201'), true);
+    assert.equal(text().includes('尚未回放到事件'), false);
+  });
+});
+
+test('the run picker stays when the selected run is outside the prefix', async () => {
+  const replay: ReplayData = {
+    file: '/tmp/two-runs.jsonl',
+    invalidLines: 0,
+    truncated: false,
+    events: [storedRun(0), storedRun(1), storedRun(2)],
+  };
+  await renderReplay(replay, async dom => {
+    const picker = () =>
+      dom.window.document.querySelector('[data-testid="replay-run-picker"]') as HTMLSelectElement | null;
+    const text = () => dom.window.document.body.textContent ?? '';
+    const heading = () => dom.window.document.querySelector('.run-name')?.textContent ?? '';
+    assert.equal(picker()?.value, 'run-003');
+    assert.equal(heading().includes('任务3'), true);
+    await act(async () => {
+      const select = picker();
+      assert.ok(select);
+      const setValue = Object.getOwnPropertyDescriptor(dom.window.HTMLSelectElement.prototype, 'value')?.set;
+      setValue?.call(select, 'run-002');
+      select.dispatchEvent(new dom.window.Event('change', {bubbles: true}));
+    });
+    assert.equal(heading().includes('任务2'), true);
+    const previous = () =>
+      Array.from(dom.window.document.querySelectorAll('button')).find(node => node.textContent === '上一条');
+    await act(async () => {
+      previous()?.dispatchEvent(new dom.window.MouseEvent('click', {bubbles: true}));
+    });
+    assert.equal(text().includes('第 2 / 3 条'), true);
+    await act(async () => {
+      previous()?.dispatchEvent(new dom.window.MouseEvent('click', {bubbles: true}));
+    });
+    assert.equal(text().includes('第 1 / 3 条'), true);
+    assert.ok(picker());
+    assert.equal(picker()?.value, 'run-001');
+    assert.equal(text().includes('尚未回放到事件'), true);
+  });
+});
+
+test('loading earlier replay events reads the prefix instead of stopping', async () => {
+  const events = Array.from({length: 450}, (_item, index) => heartbeat(index + 1));
+  const replay: ReplayData = {
+    file: '/tmp/long-run.jsonl',
+    invalidLines: 0,
+    truncated: false,
+    events,
+  };
+  await renderReplay(replay, async dom => {
+    const button = (label: string) =>
+      Array.from(dom.window.document.querySelectorAll('button')).find(node => node.textContent === label);
+    await act(async () => {
+      button('时间线')?.dispatchEvent(new dom.window.MouseEvent('click', {bubbles: true}));
+    });
+    const items = () => dom.window.document.querySelectorAll('[data-testid="timeline-item"]');
+    const older = () => dom.window.document.querySelector('[data-testid="timeline-load-older"]');
+    assert.equal(items().length, 400);
+    assert.equal(older()?.textContent, '加载更早');
+    await act(async () => {
+      older()?.dispatchEvent(new dom.window.MouseEvent('click', {bubbles: true}));
+    });
+    assert.equal(items().length, 450);
+    assert.equal(older()?.textContent, '加载更早');
+    await act(async () => {
+      older()?.dispatchEvent(new dom.window.MouseEvent('click', {bubbles: true}));
+    });
+    assert.equal(older()?.textContent, '没有更早的事件');
+  });
 });

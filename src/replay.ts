@@ -1,5 +1,5 @@
+import type {PageQuery, Snapshot} from './ipc';
 import type {MonitorEvent, StoredEvent} from './protocol';
-import type {Snapshot} from './ipc';
 import {applyEvent, emptyRun, type RunState} from './state';
 
 export const REPLAY_EVENT_LIMIT = 20000;
@@ -47,14 +47,16 @@ export function parseReplay(text: string, parsers: ReplayParsers, limit = REPLAY
       const {received_at, cursor, ...event} = record;
       parsers.validateEvent(event);
       const clean = parsers.sanitizeEvent(event, false);
+      const lineNumber = index + 1;
+      if (cursor !== undefined && !Number.isSafeInteger(cursor)) throw new Error('Invalid cursor');
+      if (received_at !== undefined && typeof received_at !== 'string') throw new Error('Invalid received_at');
       if (events.length >= limit) {
         truncated = true;
         continue;
       }
-      const lineNumber = index + 1;
       events.push({
         ...clean,
-        received_at: typeof received_at === 'string' && received_at ? received_at : clean.occurred_at,
+        received_at: typeof received_at === 'string' ? received_at : clean.occurred_at,
         cursor: Number.isSafeInteger(cursor) ? (cursor as number) : lineNumber,
       });
     } catch {
@@ -85,19 +87,35 @@ export function replaySnapshot(events: readonly StoredEvent[], count: number, ru
     applyEvent(run, event);
     applied.push(event);
     if (event.cursor > cursor) cursor = event.cursor;
-    if (focus === undefined) focus = event.run_id;
+    if (runId === undefined) focus = event.run_id;
     while (runs.size > 200) {
       const oldest = runs.keys().next().value;
       if (oldest === undefined) break;
       runs.delete(oldest);
     }
   }
-  const visible = focus ? applied.filter(event => event.run_id === focus) : applied;
+  const selected = focus !== undefined ? runs.get(focus) : undefined;
+  const visible = selected ? applied.filter(event => event.run_id === selected.id) : applied;
   return {
     cursor,
     runs: [...runs.values()].map(({decisions, attempts, ...summary}) => summary),
-    run: focus ? runs.get(focus) : undefined,
+    run: selected,
     events: visible,
     corruptLines: 0,
   };
+}
+
+export function pageReplay(events: readonly StoredEvent[], count: number, query: PageQuery = {}): StoredEvent[] {
+  const end = Number.isFinite(count) ? Math.max(0, Math.min(events.length, Math.trunc(count))) : 0;
+  const raw = query.limit;
+  const requested = typeof raw === 'number' && Number.isFinite(raw) ? Math.trunc(raw) : 100;
+  const limit = Math.min(500, Math.max(1, requested));
+  const before = typeof query.beforeCursor === 'number' ? query.beforeCursor : undefined;
+  const rows = events.slice(0, end).filter(event => {
+    if (query.runId !== undefined && event.run_id !== query.runId) return false;
+    if (before !== undefined && event.cursor >= before) return false;
+    return true;
+  });
+  rows.sort((left, right) => left.cursor - right.cursor);
+  return rows.slice(-limit);
 }

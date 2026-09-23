@@ -202,3 +202,17 @@
   - `parseReplay`：缺少 `cursor` 仍用 1 起的行号，缺少 `received_at` 仍用 `occurred_at`。字段在但 `cursor` 不是安全整数（含小数），或 `received_at` 不是字符串，记为无效行并跳过。空字符串 `received_at` 保留。负的安全整数仍保留。
 - 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（49 项）通过，`pnpm build` 通过。Windows / macOS 窗口未验证。三平台 CI 见本 PR。
 - 遗留：主进程仍同步读取未超过 50 MiB 的回放文件。50 MiB 边界没有走真实 `readBounded` 的临时文件测试。`replaySnapshot` 仍在 `src/replay.ts`。播放间隔未改。README 未改。
+
+## P1-09 — 导出改为逐行校验并脱敏
+
+- 日期：2026-09-23
+- harness：cursor
+- model：grok
+- 提交：本条所在提交
+- 内容：
+  - 本条由 Cursor 云端 agent 完成，仍在 `cursor/p1-09-export-replay-973f` 上，不另开 PR。git 作者沿用环境里的 Cursor Agent，没有改 `user.name` / `user.email`。
+  - `exportLines` 不再把分段文件原文拼在一起。每一段单独按行解析（去掉 BOM 和行尾 `\r`），校验通过后用 `sanitizeEvent(..., false)` 脱敏并丢掉 `diagnostic`，再写成自带换行的一行。损坏行、残缺行尾、以及已出现但不是安全整数的 `cursor` 都跳过，并在返回值 `skipped` 里计数。
+  - `monitor:export` 把 `skipped` 交给界面。成功导出时，跳过数大于 0 会写在「已导出 …」后面。
+  - 回放决策链和时间线仍用展开视图的 `decisionChain` / `TimelineTab`，本分支没有另写一份。超过 200 个运行的焦点、回放前缀分页、以及非整数 `cursor` 的拒绝都保持上一则的行为。
+- 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（50 项）通过，`pnpm build` 通过。Windows / macOS 窗口未验证。三平台 CI 见本 PR。
+- 遗留：同上一则。导出仍同步读取全部分段。README 未改。

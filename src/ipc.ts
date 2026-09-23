@@ -58,6 +58,7 @@ export interface ExportResult {
   saved: boolean;
   path?: string;
   bytes?: number;
+  skipped?: number;
 }
 
 export interface ReplayData {

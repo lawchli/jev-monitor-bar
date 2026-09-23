@@ -115,7 +115,7 @@ test('replaying the first N events matches an EventStore loaded with those rows'
   assert.equal(store.ingest(started).accepted, true);
   assert.equal(store.ingest(beat).accepted, true);
   assert.equal(store.ingest(done).accepted, true);
-  const parsed = parseReplay(store.exportLines(), parsers);
+  const parsed = parseReplay(store.exportLines().text, parsers);
   assert.deepEqual(replaySnapshot(parsed.events, parsed.events.length, 'run-1').run, store.snapshot('run-1').run);
 
   const partialDir = tempDir();
@@ -217,6 +217,93 @@ test('pageReplay reads earlier rows from the replay prefix', () => {
   assert.equal(pageReplay(wide, wide.length, {limit: 900}).length, 500);
 });
 
+function storedLine(sequence: number, payload: Record<string, unknown> = {}, extra: Record<string, unknown> = {}) {
+  return JSON.stringify({
+    ...JSON.parse(monitorLine(sequence, {}, payload)),
+    received_at: '2026-01-01T00:00:00.000Z',
+    cursor: sequence,
+    ...extra,
+  });
+}
+
+test('export redacts secrets and keeps one validated event per line', async () => {
+  const dir = tempDir();
+  const events = path.join(dir, 'events');
+  fs.mkdirSync(events);
+  const secret = storedLine(1, {
+    summary: 'password=hunter2 Bearer abc.def.ghi',
+    diagnostic: {token: 'secret-token'},
+  });
+  const second = storedLine(2, {summary: '第二条'});
+  const third = storedLine(3, {summary: '第三条'});
+  const badCursor = storedLine(4, {summary: '小数游标'}, {cursor: 1.5});
+  const file1 = path.join(events, 'events-00000001.jsonl');
+  const file2 = path.join(events, 'events-00000002.jsonl');
+  const file3 = path.join(events, 'events-00000003.jsonl');
+  fs.writeFileSync(file1, `${secret}\r\n{"torn"`);
+  fs.writeFileSync(file2, second);
+  fs.writeFileSync(file3, `not-json\n${badCursor}\n${third}\n`);
+  const glued = parseReplay(`${fs.readFileSync(file1, 'utf8')}${fs.readFileSync(file2, 'utf8')}`, parsers);
+  assert.equal(
+    glued.events.some(event => event.event_id === 'e2'),
+    false,
+  );
+
+  const store = new EventStore(events);
+  const exported = store.exportLines();
+  assert.equal(exported.skipped, 3);
+  assert.equal(exported.text.endsWith('\n'), true);
+  assert.doesNotMatch(exported.text, /hunter2|abc\.def\.ghi|secret-token/);
+  assert.match(fs.readFileSync(file1, 'utf8'), /hunter2/);
+  const lines = exported.text.split('\n').filter(line => line.length > 0);
+  assert.deepEqual(
+    lines.map(line => JSON.parse(line).event_id),
+    ['e1', 'e2', 'e3'],
+  );
+  assert.equal(JSON.parse(lines[0]).payload.summary, 'password=[REDACTED] Bearer [REDACTED]');
+  assert.equal('diagnostic' in JSON.parse(lines[0]).payload, false);
+  assert.equal(
+    lines.every(line => !line.includes('\n') && JSON.parse(line).event_id),
+    true,
+  );
+
+  const parsed = parseReplay(exported.text, parsers);
+  assert.equal(parsed.invalidLines, 0);
+  assert.deepEqual(
+    parsed.events.map(event => event.event_id),
+    ['e1', 'e2', 'e3'],
+  );
+  assert.equal(parsed.events[0].payload.summary, 'password=[REDACTED] Bearer [REDACTED]');
+
+  const frame = {url: 'file:///renderer/index.html'};
+  const contents: RendererContents = {mainFrame: frame};
+  const handlers = createMonitorHandlers({
+    store,
+    controller: {setMode: mode => mode, setPinned: pinned => pinned},
+    getStatus: () => {
+      throw new Error('unused');
+    },
+    rendererUrl: frame.url,
+    contents,
+  });
+  let saved = '';
+  const result = await handlers.exportEvents(
+    {sender: contents, senderFrame: frame},
+    {
+      saveDialog: async () => '/tmp/redacted.jsonl',
+      openDialog: async () => undefined,
+      readBounded: () => ({ok: true, text: saved}),
+      write: (_file, contents) => {
+        saved = contents;
+      },
+    },
+  );
+  assert.equal(result.saved, true);
+  assert.equal(result.skipped, 3);
+  assert.equal(saved, exported.text);
+  assert.equal(result.bytes, Buffer.byteLength(exported.text));
+});
+
 test('export and open replay stay inside the monitor window', async () => {
   const dir = tempDir();
   const store = new EventStore(path.join(dir, 'events'));
@@ -242,7 +329,7 @@ test('export and open replay stay inside the monitor window', async () => {
       return '/tmp/export.jsonl';
     },
     openDialog: async () => '/tmp/export.jsonl',
-    readBounded: () => ({ok: true, text: saved || store.exportLines()}),
+    readBounded: () => ({ok: true, text: saved || store.exportLines().text}),
     write: (_file, contents) => {
       saved = contents;
     },
@@ -252,7 +339,8 @@ test('export and open replay stay inside the monitor window', async () => {
   const exported = await handlers.exportEvents(event, files());
   assert.equal(exported.saved, true);
   assert.equal(exported.path, '/tmp/export.jsonl');
-  assert.equal(saved, store.exportLines());
+  assert.equal(saved, store.exportLines().text);
+  assert.equal(exported.skipped, 0);
   assert.equal(exported.bytes, Buffer.byteLength(saved));
 
   const opened = await handlers.openReplay(event, files());

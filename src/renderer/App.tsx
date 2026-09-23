@@ -103,7 +103,8 @@ export function App({bridge}: {bridge: MonitorBridge}) {
         .then(result => {
           if (result.saved) {
             const name = result.path ? fileBase(result.path) : '文件';
-            setExportNote(`已导出 ${name}（${result.bytes ?? 0} 字节）`);
+            const skipped = result.skipped ? `，跳过 ${result.skipped} 行` : '';
+            setExportNote(`已导出 ${name}（${result.bytes ?? 0} 字节${skipped}）`);
           } else {
             setExportNote('已取消导出');
           }

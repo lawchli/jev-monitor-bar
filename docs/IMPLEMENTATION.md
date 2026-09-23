@@ -492,3 +492,16 @@
   - 冲突在 `docs/IMPLEMENTATION.md`、`src/main/ipc-api.ts`、`src/store.ts`。保留 P1-09 逐行校验并脱敏的 `exportLines`，并加上 `historyTruncated`。回放的 `pageReplay` 仍只读播放头之前的前缀，桥接成 `{events, truncated: false}`，空页写「没有更早的事件」，不把回放文件的截断说成内存窗口淘汰。
 - 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（123 通过）、`pnpm build` 通过。未再启动 Electron 窗口。Windows / macOS 未在本机执行。三平台 CI 以本提交推送后的 Actions 为准。
 - 遗留：同记录 08。展开视图的连接状态、决策链空格和 README 仍未改。
+
+## 09 — 导出空段与回放焦点
+
+- 日期：2026-09-23
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：在 `cursor/fix-replay-a5-a7-83b9`（起点 `8e1eb65`）上处理 A5、A6、A7。未改 `src/renderer/expanded/model.ts` 和 `TimelineTab`。记录 01–08 未改写。
+  - A5/A6：`exportLines` 仍按段逐行解析、`sanitizeEvent(..., false)`、跳过损坏行并计数，没有改回原文拼接。无末尾换行的有效段已由 `export redacts secrets and keeps one validated event per line` 里的第二段覆盖。该夹具补上一份夹在两段有效事件之间的空段；后一段仍在导出里。脱敏没有放宽。
+  - A7：`replaySnapshot` 在请求的焦点不在剩余 run 里时，用 `pickDefaultRun` 选一个仍在的 run。返回的 `run` 属于 `runs`，事件列表只含这个 run。前缀里一个 run 都没有时，`run` 仍为空，界面才显示「尚未回放到事件」。
+  - 淘汰收成 `src/state.ts` 的 `selectRunToEvict`。已结束的 run 里丢掉 `ended_at` 最早的，否则丢掉 `last_received` 最早的；时间相同则保留先出现的。`EventStore.evictRun` 和 `replaySnapshot` 都调用它。实时存储原先用 `last_received` 给已结束 run 排序，现与这条规则对齐。
+- 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm typecheck` 通过；`pnpm exec tsx --test tests/replay.test.ts tests/store-recovery.test.ts` 16 项通过。未跑完整 `pnpm test`。未做原生 Windows / macOS 窗口、可见延迟、30 分钟负载、打包或 Defender。
+- 遗留：A1–A4、A8–A10 未在本分支处理。导出仍同步读取全部分段。回放主进程仍同步读取未超过 50 MiB 的文件。未做原生 Windows / macOS 窗口、可见延迟、30 分钟负载、打包或 Defender。

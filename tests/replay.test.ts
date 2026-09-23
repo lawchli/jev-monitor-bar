@@ -167,14 +167,65 @@ test('a replay longer than 200 runs keeps focus on a surviving run', () => {
   );
 
   const evicted = replaySnapshot(events, events.length, 'run-001');
-  assert.equal(evicted.run, undefined);
+  assert.ok(evicted.run);
+  assert.equal(evicted.run?.id, 'run-201');
+  assert.equal(
+    evicted.runs.some(run => run.id === evicted.run?.id),
+    true,
+  );
   assert.equal(evicted.runs.length, 200);
   assert.equal(
-    evicted.events.every(event => event.run_id === 'run-001'),
+    evicted.runs.some(run => run.id === 'run-001'),
     false,
   );
   assert.equal(
-    evicted.events.some(event => event.run_id === 'run-201'),
+    evicted.events.every(event => event.run_id === evicted.run?.id),
+    true,
+  );
+  assert.equal(evicted.events.length, 1);
+});
+
+test('replay drops an older ended run before an earlier unfinished run', () => {
+  const at = (second: number) => `2026-01-01T00:00:${String(second).padStart(2, '0')}.000Z`;
+  const row = (
+    cursor: number,
+    runId: string,
+    type: 'run.started' | 'run.completed',
+    received: string,
+  ): StoredEvent => ({
+    schema_version: 1,
+    event_id: `e${cursor}`,
+    run_id: runId,
+    producer_id: 'host-1',
+    sequence: 1,
+    occurred_at: received,
+    type,
+    payload: type === 'run.started' ? {name: runId} : {},
+    received_at: received,
+    cursor,
+  });
+  const events = [
+    row(1, 'run-live-old', 'run.started', at(0)),
+    row(2, 'run-ended-old', 'run.completed', at(1)),
+    ...Array.from({length: 199}, (_item, index) => row(index + 3, `run-live-${index + 3}`, 'run.started', at(2))),
+  ];
+  const snapshot = replaySnapshot(events, events.length);
+  assert.equal(snapshot.runs.length, 200);
+  assert.equal(
+    snapshot.runs.some(run => run.id === 'run-live-old'),
+    true,
+  );
+  assert.equal(
+    snapshot.runs.some(run => run.id === 'run-ended-old'),
+    false,
+  );
+  assert.ok(snapshot.run);
+  assert.equal(
+    snapshot.runs.some(run => run.id === snapshot.run?.id),
+    true,
+  );
+  assert.equal(
+    snapshot.events.every(event => event.run_id === snapshot.run?.id),
     true,
   );
 });
@@ -238,9 +289,11 @@ test('export redacts secrets and keeps one validated event per line', async () =
   const third = storedLine(3, {summary: '第三条'});
   const badCursor = storedLine(4, {summary: '小数游标'}, {cursor: 1.5});
   const file1 = path.join(events, 'events-00000001.jsonl');
-  const file2 = path.join(events, 'events-00000002.jsonl');
-  const file3 = path.join(events, 'events-00000003.jsonl');
+  const empty = path.join(events, 'events-00000002.jsonl');
+  const file2 = path.join(events, 'events-00000003.jsonl');
+  const file3 = path.join(events, 'events-00000004.jsonl');
   fs.writeFileSync(file1, `${secret}\r\n{"torn"`);
+  fs.writeFileSync(empty, '');
   fs.writeFileSync(file2, second);
   fs.writeFileSync(file3, `not-json\n${badCursor}\n${third}\n`);
   const glued = parseReplay(`${fs.readFileSync(file1, 'utf8')}${fs.readFileSync(file2, 'utf8')}`, parsers);
@@ -511,6 +564,16 @@ test('opening more than 200 runs still shows the run picker', async () => {
     assert.equal(picker()?.value, 'run-201');
     assert.equal(text().includes('任务201'), true);
     assert.equal(text().includes('尚未回放到事件'), false);
+    await act(async () => {
+      const select = picker();
+      assert.ok(select);
+      const setValue = Object.getOwnPropertyDescriptor(dom.window.HTMLSelectElement.prototype, 'value')?.set;
+      setValue?.call(select, 'run-200');
+      select.dispatchEvent(new dom.window.Event('change', {bubbles: true}));
+    });
+    assert.equal(picker()?.value, 'run-200');
+    assert.equal(text().includes('任务200'), true);
+    assert.equal(text().includes('尚未回放到事件'), false);
   });
 });
 
@@ -528,26 +591,43 @@ test('the run picker stays when the selected run is outside the prefix', async (
     const heading = () => dom.window.document.querySelector('.run-name')?.textContent ?? '';
     assert.equal(picker()?.value, 'run-003');
     assert.equal(heading().includes('任务3'), true);
-    await act(async () => {
-      const select = picker();
-      assert.ok(select);
-      const setValue = Object.getOwnPropertyDescriptor(dom.window.HTMLSelectElement.prototype, 'value')?.set;
-      setValue?.call(select, 'run-002');
-      select.dispatchEvent(new dom.window.Event('change', {bubbles: true}));
-    });
-    assert.equal(heading().includes('任务2'), true);
+    const choose = async (id: string) => {
+      await act(async () => {
+        const select = picker();
+        assert.ok(select);
+        const setValue = Object.getOwnPropertyDescriptor(dom.window.HTMLSelectElement.prototype, 'value')?.set;
+        setValue?.call(select, id);
+        select.dispatchEvent(new dom.window.Event('change', {bubbles: true}));
+      });
+    };
     const previous = () =>
       Array.from(dom.window.document.querySelectorAll('button')).find(node => node.textContent === '上一条');
-    await act(async () => {
-      previous()?.dispatchEvent(new dom.window.MouseEvent('click', {bubbles: true}));
-    });
+    const stepBack = async () => {
+      await act(async () => {
+        previous()?.dispatchEvent(new dom.window.MouseEvent('click', {bubbles: true}));
+      });
+    };
+    await choose('run-003');
+    await stepBack();
     assert.equal(text().includes('第 2 / 3 条'), true);
-    await act(async () => {
-      previous()?.dispatchEvent(new dom.window.MouseEvent('click', {bubbles: true}));
-    });
+    assert.equal(text().includes('尚未回放到事件'), false);
+    assert.equal(picker()?.options.length, 2);
+    assert.equal(picker()?.value, 'run-002');
+    assert.equal(heading().includes('任务2'), true);
+    await choose('run-001');
+    assert.equal(heading().includes('任务1'), true);
+    assert.equal(text().includes('尚未回放到事件'), false);
+    await choose('run-002');
+    assert.equal(heading().includes('任务2'), true);
+    await stepBack();
     assert.equal(text().includes('第 1 / 3 条'), true);
     assert.ok(picker());
     assert.equal(picker()?.value, 'run-001');
+    assert.equal(heading().includes('任务1'), true);
+    assert.equal(text().includes('尚未回放到事件'), false);
+    await stepBack();
+    assert.equal(text().includes('第 0 / 3 条'), true);
+    assert.equal(picker(), null);
     assert.equal(text().includes('尚未回放到事件'), true);
   });
 });

@@ -64,6 +64,19 @@ export function emptyRun(id: string): RunState {
     limited: false,
   };
 }
+// Finished runs leave first, earliest ended_at first. Otherwise the earliest last_received leaves. Equal times keep the earlier run.
+export function selectRunToEvict<T extends {id: string; ended_at?: string; last_received?: string}>(
+  runs: Iterable<T>,
+): T | undefined {
+  let ended: T | undefined;
+  let oldest: T | undefined;
+  for (const run of runs) {
+    const received = run.last_received ?? '';
+    if (!oldest || received < (oldest.last_received ?? '')) oldest = run;
+    if (run.ended_at !== undefined && (!ended || run.ended_at < (ended.ended_at ?? ''))) ended = run;
+  }
+  return ended ?? oldest;
+}
 export function later(a: StoredEvent, b?: StoredEvent): boolean {
   if (!b) return true;
   if (a.producer_id === b.producer_id) return a.sequence > b.sequence;

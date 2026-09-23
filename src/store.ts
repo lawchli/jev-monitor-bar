@@ -3,7 +3,7 @@ import path from 'node:path';
 import {EventEmitter} from 'node:events';
 import {validateEvent, type MonitorEvent, type StoredEvent} from './protocol';
 import {sanitizeEvent} from './redact';
-import {applyEvent, emptyRun, type RunState} from './state';
+import {applyEvent, emptyRun, selectRunToEvict, type RunState} from './state';
 
 export class EventStore extends EventEmitter {
   events: StoredEvent[] = [];
@@ -79,14 +79,7 @@ export class EventStore extends EventEmitter {
     return JSON.stringify([e.run_id, e.producer_id, e.sequence]);
   }
   private evictRun() {
-    let ended: RunState | undefined;
-    let oldest: RunState | undefined;
-    for (const run of this.runs.values()) {
-      const at = run.last_received ?? '';
-      if (!oldest || at < (oldest.last_received ?? '')) oldest = run;
-      if (run.ended_at !== undefined && (!ended || at < (ended.last_received ?? ''))) ended = run;
-    }
-    const victim = ended ?? oldest;
+    const victim = selectRunToEvict(this.runs.values());
     if (victim) this.runs.delete(victim.id);
   }
   private remember(e: StoredEvent) {

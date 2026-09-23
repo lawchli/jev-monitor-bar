@@ -1,6 +1,7 @@
 import type {PageQuery, Snapshot} from './ipc';
 import type {MonitorEvent, StoredEvent} from './protocol';
-import {applyEvent, emptyRun, type RunState} from './state';
+import {pickDefaultRun} from './renderer/view-model/common';
+import {applyEvent, emptyRun, selectRunToEvict, type RunState} from './state';
 
 export const REPLAY_EVENT_LIMIT = 20000;
 export const REPLAY_MAX_BYTES = 50 * 1024 * 1024;
@@ -89,18 +90,18 @@ export function replaySnapshot(events: readonly StoredEvent[], count: number, ru
     if (event.cursor > cursor) cursor = event.cursor;
     if (runId === undefined) focus = event.run_id;
     while (runs.size > 200) {
-      const oldest = runs.keys().next().value;
-      if (oldest === undefined) break;
-      runs.delete(oldest);
+      const victim = selectRunToEvict(runs.values());
+      if (!victim) break;
+      runs.delete(victim.id);
     }
   }
-  const selected = focus !== undefined ? runs.get(focus) : undefined;
-  const visible = selected ? applied.filter(event => event.run_id === selected.id) : applied;
+  let selected = focus !== undefined ? runs.get(focus) : undefined;
+  if (!selected) selected = pickDefaultRun([...runs.values()]);
   return {
     cursor,
     runs: [...runs.values()].map(({decisions, attempts, ...summary}) => summary),
     run: selected,
-    events: visible,
+    events: selected ? applied.filter(event => event.run_id === selected.id) : [],
     corruptLines: 0,
   };
 }

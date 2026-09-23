@@ -452,3 +452,16 @@
   - 仓库里原来没有 `docs/STATUS.md`。放入 `9537853` 的历史快照，并在文末追加更正：快照里「8 个 PR、P1-08/09 未开工」只代表写入当时，不能当派工依据。快照原文未删。
 - 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm install` 报告锁文件已一致；`pnpm typecheck` 通过；`pnpm test` 116 项通过；`pnpm format:check` 通过。同一台机器 Python 3.12.3 上 `python -m unittest discover -s python/tests` 20 项通过。未跑 Python 3.9 / 3.13。未做原生 Windows / macOS 窗口、可见延迟、30 分钟负载、打包或 Defender。三平台 CI 以本提交推送后的 Actions 为准。
 - 遗留：A1–A10 未修。`--fresh` 两套实现并存。M5 未开始。原生 Windows、打包、Defender 未完成。
+
+## 09 — 导出空段与回放焦点
+
+- 日期：2026-09-23
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：在 `cursor/fix-replay-a5-a7-83b9`（起点 `8e1eb65`）上处理 A5、A6、A7。未改 `src/renderer/expanded/model.ts` 和 `TimelineTab`。记录 01–08 未改写。
+  - A5/A6：`exportLines` 仍按段逐行解析、`sanitizeEvent(..., false)`、跳过损坏行并计数，没有改回原文拼接。无末尾换行的有效段已由 `export redacts secrets and keeps one validated event per line` 里的第二段覆盖。该夹具补上一份夹在两段有效事件之间的空段；后一段仍在导出里。脱敏没有放宽。
+  - A7：`replaySnapshot` 在请求的焦点不在剩余 run 里时，用 `pickDefaultRun` 选一个仍在的 run。返回的 `run` 属于 `runs`，事件列表只含这个 run。前缀里一个 run 都没有时，`run` 仍为空，界面才显示「尚未回放到事件」。
+  - 淘汰收成 `src/state.ts` 的 `selectRunToEvict`。已结束的 run 里丢掉 `ended_at` 最早的，否则丢掉 `last_received` 最早的；时间相同则保留先出现的。`EventStore.evictRun` 和 `replaySnapshot` 都调用它。实时存储原先用 `last_received` 给已结束 run 排序，现与这条规则对齐。
+- 验证：提交后执行 `pnpm typecheck` 和 `pnpm exec tsx --test tests/replay.test.ts tests/store-recovery.test.ts`。结果补记在本条。
+- 遗留：A1–A4、A8–A10 未在本分支处理。导出仍同步读取全部分段。回放主进程仍同步读取未超过 50 MiB 的文件。未做原生 Windows / macOS 窗口、可见延迟、30 分钟负载、打包或 Defender。

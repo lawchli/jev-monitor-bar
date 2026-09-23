@@ -77,3 +77,11 @@ P12 后续：仓库所有者改为按运行位置区分。Cursor 云端 agent �
 ## 2026-09-23 集成前 HEAD 复核
 
 审计快照之后重新 fetch：P1-01 为 `81e0117`（报告 `c5a3a18`），P1-07 为 `cc0981f`（报告 `c44e074`），P1-08 为 `de08926`（报告 `b862958`），P1-09 为 `dcf879c`（报告 `94d1f01`）。其余 9 个分支 HEAD 与报告一致，含 `main@cd99afb`。分支表见 `AGENT_DIRECTION_AUDIT.md` 文末「集成前 HEAD 复核」。新提交没有把 A1–A10 标成已解决；A1、A4 在 P1-06 `8256599` 上仍无后续提交。
+
+## 2026-09-23 A10 文档更正（cursor-cloud-agent / grok）
+
+本次只对照集成分支上的代码更正文档，不改应用行为。上面的 C6 原行保留：重启恢复曾经只从校验通过的行取 cursor，这个问题没有被写成从未存在。
+
+C6：P1-02 以及现在的集成分支只保住可解析 JSON 的 cursor。恢复时 `JSON.parse` 成功且 `cursor` 为安全整数的行会计入高水位，即使 `validateEvent` 失败。完全 torn、无法 `JSON.parse` 的行仍然没有高水位，只计入 `corruptLines`。
+
+演示 reconnect 若只是停发几十秒，并不等于验证了进程重启、凭证轮换和队列补发。P1-00 的边界守卫只扫描 `src` 里的 TypeScript 字符串，不覆盖 Python 重定向，也不能证明发布包不联网。

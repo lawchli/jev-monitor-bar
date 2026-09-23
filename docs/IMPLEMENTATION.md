@@ -9,7 +9,7 @@
 | 里程碑 | 内容 | 状态 |
 | --- | --- | --- |
 | M0 | 核实 TypeSafe 接口、参考项目与技术选型 | 完成（记录 01） |
-| M1 | 协议、接收、持久化、状态聚合、脱敏；单元测试与三平台 CI | 集成分支已有核心模块、JSON Schema、协议文档与模拟场景（记录 08）。A1–A10 未在本次合并中修复 |
+| M1 | 协议、接收、持久化、状态聚合、脱敏；单元测试与三平台 CI | 集成分支已有核心模块、JSON Schema、协议文档与模拟场景（记录 08）。协议与审计里过时的句子在记录 A10 更正。A1–A9 未修，闭环验收未做 |
 | M2 | Electron 主进程、平台模块、preload、Windows 置顶小窗 | 集成分支已有主进程、平台模块、preload 与窗口位置恢复（记录 08）。原生 Windows 窗口未验证 |
 | M3 | 紧凑/展开 UI、详情、时间线、断线提示、导出与回放 | 集成分支已有紧凑条、展开视图、导出与回放（记录 08） |
 | M4 | Python 发送器、示例宿主、`pnpm demo` | 集成分支已有 Python 发送器、示例宿主与 `pnpm demo`（记录 08） |
@@ -452,6 +452,20 @@
   - 仓库里原来没有 `docs/STATUS.md`。放入 `9537853` 的历史快照，并在文末追加更正：快照里「8 个 PR、P1-08/09 未开工」只代表写入当时，不能当派工依据。快照原文未删。
 - 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm install` 报告锁文件已一致；`pnpm typecheck` 通过；`pnpm test` 116 项通过；`pnpm format:check` 通过。同一台机器 Python 3.12.3 上 `python -m unittest discover -s python/tests` 20 项通过。未跑 Python 3.9 / 3.13。未做原生 Windows / macOS 窗口、可见延迟、30 分钟负载、打包或 Defender。三平台 CI 以本提交推送后的 Actions 为准。
 - 遗留：A1–A10 未修。`--fresh` 两套实现并存。M5 未开始。原生 Windows、打包、Defender 未完成。
+
+## A10 — 更正协议与审计里过时的集成描述
+
+- 日期：2026-09-23
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：只改文档，不改 `src/`、`python/`、`scripts/`，也不改应用行为。记录 01 到记录 08 未改写。
+  - `docs/PROTOCOL.md` 按当前代码改写：cursor 高水位在 `JSON.parse` 成功且 `cursor` 为安全整数时计入，即使 `validateEvent` 失败；无法解析的行只计 `corruptLines`。会话写入改为临时文件再 `rename`，POSIX `chmod` 0600，`EPERM`/`EBUSY`/`EACCES` 会重试。`resolveMonitorPaths` 的路径规则已落地。`usage` 的非数字值由入口 `dictionary(num)` 拒绝整条事件。run 淘汰改为最多 200 个，优先结束且 `last_received` 最早的。补上 `exportLines` 的逐行校验、脱敏、丢掉 `diagnostic` 和损坏行计入 `skipped`。会话 URL 以接收端只听 `127.0.0.1` 和 Python 发送端的 loopback 校验为准。
+  - `docs/AUDIT.md` 只追加。C6 原行保留，并写明 P1-02 与集成分支仍没有完全 torn 行的高水位。
+  - `docs/STATUS.md` 在已有「快照过时」更正之后再追加一句：集成分支已包含 P1-08 与 P1-09，快照原文仍保留。
+  - 里程碑表只把 M1 的文档更正和「A1–A9 未修、闭环验收未做」写进去。M5、原生 Windows、打包、Defender 仍是未完成。
+- 验证：对照 `src/store.ts`、`src/session.ts`、`src/paths.ts`、`src/protocol.ts`、`src/server.ts`、`python/jev_monitor/sender.py` 和 `tests/boundaries.test.ts` 核对句子。未改应用代码，未重跑 `pnpm typecheck` / `pnpm test`。未做进程重启、凭证轮换、队列补发的闭环验收，也未做 30 分钟负载、原生 Windows 窗口、打包或 Defender。三平台 CI 通过不等于原生窗口已验收。
+- 遗留：完全无法 `JSON.parse` 的尾行仍没有高水位。演示 reconnect 若只是停发几十秒，并不等于验证了进程重启、凭证轮换和队列补发。P1-00 的边界守卫只扫描 `src` 里的 TypeScript 字符串，不覆盖 Python 重定向，也不能证明发布包不联网。M5 未开始。原生 Windows、打包、Defender 未完成。A1–A9 未修。
 
 ## 09 — 接入展开视图修正：选择不写成已执行
 

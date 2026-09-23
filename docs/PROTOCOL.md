@@ -1,6 +1,6 @@
 # JEV Monitor 事件协议 v1
 
-本文只写当前代码的行为：`src/protocol.ts` 的校验、`src/server.ts` 的接收、`src/store.ts` 的保存与去重、`src/state.ts` 的状态聚合、`src/redact.ts` 的脱敏。代码里没有的规则，下文不把它说成已经生效。
+本文只写当前代码的行为：`src/protocol.ts` 的校验、`src/server.ts` 的接收、`src/session.ts` 的会话文件、`src/paths.ts` 的路径、`src/store.ts` 的保存、去重与导出、`src/state.ts` 的状态聚合、`src/redact.ts` 的脱敏，以及 `python/jev_monitor/sender.py` 对会话 URL 的接受范围。代码里没有的规则，下文不把它说成已经生效。
 
 ## 版本与传输
 
@@ -39,19 +39,23 @@
 {"url":"http://127.0.0.1:<端口>","token":"<64 位十六进制>"}
 ```
 
-token 是 32 个随机字节的 hex。`url` 里没有路径，也没有 token；发送端自己接上 `/events` 或 `/health`。写入用 `writeFileSync`，mode 为 `0o600`。这不是「写临时文件再改名」。文件已经存在时，POSIX 上这个 mode 不会改掉原来的权限。Windows 上 Node 忽略 mode，文件跟着所在目录的 ACL。
+token 是 32 个随机字节的 hex。会话里的 `url` 由接收端写成 `http://127.0.0.1:<端口>`，没有路径，也没有 token。接收端只 `listen` `127.0.0.1`。Python 发送端只接受 `http://127.0.0.1`，端口可以省略；`localhost`、其他主机、userinfo、query、fragment，以及除空路径和 `/` 以外的路径都会被拒绝。通过后 origin 收成 `http://127.0.0.1` 或 `http://127.0.0.1:<端口>`，再接上 `/events`。301、302、303、307、308 重定向一律拒绝。
+
+`writeSessionFile` 先把 JSON 写到 `<会话文件>.<pid>.<16 位十六进制>.tmp`（`writeFileSync`，mode 为 `0o600`），再 `rename` 盖掉目标。`rename` 遇到 `EPERM`、`EBUSY` 或 `EACCES` 时最多再试 5 次，第 n 次重试前等待 20×n 毫秒；其他错误删掉临时文件后抛出。替换成功后尝试 `chmod` 0600，失败则忽略。Windows 上 `mode` 和 `chmod` 不改变 ACL。
 
 事件目录由调用方传给 `EventStore`。段文件名是 `events-NNNNNNNN.jsonl`（8 位段号）。一段的 JSONL 字节数要再增加就会超过 4194304（4 MiB）时，换下一个段号。只保留最近 8 段；删除更早的段如果遇到文件占用，这次忽略，下次轮转再试。每次新建 `EventStore` 都会新开一个段，不接着写上次没写满的段。空目录里的第一段是 `events-00000001.jsonl`。
 
-读回时按 `\n` 分行。`JSON.parse` 接受行尾的 `\r`，所以 CRLF 文件可以读。没通过校验的行计入 `corruptLines`，不进入状态。重启后的 cursor 高水位只取校验通过、且 `received_at` 为字符串、`cursor` 为安全整数的行；损坏行里即使有 cursor 数字也不采纳。
+读回时按 `\n` 分行。`JSON.parse` 接受行尾的 `\r`，所以 CRLF 文件可以读。没通过校验的行计入 `corruptLines`，不进入状态。重启后的 cursor 高水位：一行只要 `JSON.parse` 成功，并且其中的 `cursor` 是安全整数，就计入高水位，即使 `validateEvent` 失败。完全无法 `JSON.parse` 的行只把 `corruptLines` 加一，不抬高 cursor。
 
-接收端不解析数据目录，事件目录和会话文件路径都由调用方传入。产品约定的默认位置（本仓库还没有路径解析代码）是：
+`EventStore` 和 `startServer` 仍使用调用方传入的目录和会话文件。默认位置由 `src/paths.ts` 的 `resolveMonitorPaths` 计算，桌面主进程启动时调用它：
 
-- `JEV_MONITOR_HOME` 覆盖根目录，`JEV_MONITOR_SESSION` 单独覆盖会话文件。
-- 未覆盖时：Windows 为 `%LOCALAPPDATA%\jev-monitor-bar\`，macOS 为 `~/Library/Application Support/jev-monitor-bar/`，Linux 为 `${XDG_STATE_HOME:-~/.local/state}/jev-monitor-bar/`。
-- 事件放在该根下的 `events/`，会话文件默认为该根下的 `session.json`。
+- `JEV_MONITOR_HOME` 非空时覆盖根目录。绝对路径按该平台的 path 规范化；相对路径接到 `cwd` 上。空字符串视为未设置。
+- `JEV_MONITOR_SESSION` 非空时单独覆盖会话文件，绝对路径和相对路径的处理与上面相同。未覆盖时为根目录下的 `session.json`。
+- 未覆盖根目录时：Windows 使用 `%LOCALAPPDATA%\jev-monitor-bar\`；`LOCALAPPDATA` 为空则用用户主目录下的 `AppData\Local\jev-monitor-bar\`。macOS 为 `~/Library/Application Support/jev-monitor-bar/`。Linux 及其他平台只在 `XDG_STATE_HOME` 为非空绝对路径时采用 `${XDG_STATE_HOME}/jev-monitor-bar/`，否则为 `~/.local/state/jev-monitor-bar/`。相对的 `XDG_STATE_HOME` 不采用。
+- 事件放在根下的 `events/`。同一函数还返回 `window-state.json` 和 `electron-profile/`。
+- Python `jev_monitor.paths.resolve_paths` 使用同一套根目录、事件目录、会话文件和窗口状态文件规则，不返回 `electron-profile`。
 
-环境变量为空、相对路径、以及没有 `LOCALAPPDATA` 时怎么回退，等 `src/paths.ts` 落地后以那份代码为准。本文不把那些分支写成已经生效的规则。
+Windows 与 macOS 的默认目录写在代码里，没有在对应系统上实机验收。
 
 ## 公共字段
 
@@ -108,7 +112,7 @@ ID 字符串长度 1–160，只允许 `A–Z`、`a–z`、数字和 `_ . : / -`
 - `action.selected` 可以不带 `decision_id`。`source` 为 `rule` 且没有 `decision_id`，表示规则直接选定动作，不是某次 JEV 判断的结果。
 - 判断的 `choice` 和动作的 `action` 可以不同。不同表示最终执行的不是模型选中的那一项；覆盖时带上 `rule` 和 `rule_source`。
 
-每个 run 最多留 500 个 decision 和 500 个 attempt。超出时删掉最早插入的一项，并把该 run 的 `limited` 设为 `true`。内存里最多 200 个 run，超出时按插入顺序删掉最早的一个，不看它有没有结束。
+每个 run 最多留 500 个 decision 和 500 个 attempt。超出时删掉最早插入的一项，并把该 run 的 `limited` 设为 `true`。内存里最多 200 个 run。超出时优先淘汰已经结束（`ended_at` 已有）且 `last_received` 最早的；没有已结束的 run 时，淘汰 `last_received` 最早的。
 
 ## 身份与去重
 
@@ -192,11 +196,15 @@ run：
 
 - 自由文本里，`Bearer` 后面的凭证、`sk-` / `ts-` / `key-` 后接至少 12 位的记号，以及 `api_key`、`password`、`secret`、`token`、`authorization` 用 `=` 或 `:` 带上的值，换成 `[REDACTED]`。
 - 对象的键名若匹配 authorization、cookie、password、secret、token、api key、credential、environment、`env`、raw input、prompt、`state`，整个值换成 `[REDACTED]`。
-- `candidates`、`probabilities`、`legend`、`usage` 的键是调用方起的名字，不按键名替换，只对值做文本脱敏。`usage` 里不是数字的值会丢掉。
+- `candidates`、`probabilities`、`legend`、`usage` 的键是调用方起的名字，不按键名替换，只对值做文本脱敏。`usage` 走 `dictionary(num)`，值必须是 ≥0 的数字。非数字值在入口 `validateEvent` 失败，整条事件被拒绝，不是脱敏时静默丢掉该字段。
 - 默认删掉 `diagnostic`。只有 `EventStore` 以诊断模式构造时才保留，并按键名和内容脱敏。
 - 嵌套超过 12 层写成 `[TRUNCATED]`。数组只留前 255 项。键名 `__proto__`、`constructor`、`prototype` 会丢掉。
 
 不要把秘密放进候选名、legend 的键或其他字典键。那些键不会按键名打码，界面和导出里会原样出现。
+
+## 导出
+
+`exportLines` 按段文件逐行读，不把多段原文拼成一段。先去掉文件开头的 BOM，再按 `\n` 分行并去掉行尾 `\r`。每一非空行先 `JSON.parse`，再对去掉 `received_at` 和 `cursor` 之后的事件做 `validateEvent`；`received_at` 必须是字符串，`cursor` 必须是安全整数。通过后用 `sanitizeEvent(..., false)` 脱敏，并丢掉 `diagnostic`。无法解析、校验失败或信封不合格的行计入 `skipped`，不写入结果。空行不计入 `skipped`。
 
 ## Schema 文件
 

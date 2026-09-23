@@ -100,3 +100,18 @@
 - 内容：按记录 06 与 `AGENT_DIRECTION_AUDIT.md` 开工前重新 fetch。13 个分支中 P1-01、P1-07、P1-08、P1-09 的 HEAD 已前进，其余与报告一致。在审计报告文末追加「集成前 HEAD 复核」表，并在 `docs/AUDIT.md` 追加同一事实。原审计表与记录 06 不改写。尚未开始合并功能分支。
 - 验证：`git fetch` 后用 `git rev-parse` 对照报告中的 13 个短 SHA。不一致的是 `cursor/p1-01-walking-skeleton-8677` `81e0117`、`cursor/p1-07-python-sender-52eb` `cc0981f`、`cursor/p1-08-demo-host-33a4` `de08926`、`cursor/p1-09-export-replay-973f` `dcf879c`。未跑测试，未打开每个 CI job。
 - 遗留：功能集成、A1–A8 回归与闭环验收都还没做。A9 与 Windows 原生窗口、打包、Defender 留到集成分支合并之后。
+
+## P1-00 — 格式化与边界守卫
+
+- 日期：2026-09-22
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：`3e9c654`，以及本条所在提交
+- 内容：
+  - 用 `pnpm add -D prettier` 加入 Prettier 3.9.8。`.prettierrc.json` 为 singleQuote、semi、printWidth 120、trailingComma all、arrowParens avoid、bracketSpacing false。`.prettierignore` 排除 `node_modules/`、`dist/`、`release/`、`.runtime/`、`pnpm-lock.yaml`、`*.md`、`protocol/`、`fixtures/`。
+  - scripts 增加 `format`（`prettier --write .`）和 `format:check`（`prettier --check .`）。
+  - 一次性格式化现有 `src/*.ts` 与 `tests/*.ts`，不改逻辑。`tsconfig.json` 不在切片文件清单里，但 `prettier --check .` 会检查它，因此一并格式化（见 PR「需要协调」）。
+  - 新增 `tests/boundaries.test.ts`：递归扫描 `src/**/*.{ts,tsx}`，违规报告 `文件:行号`。`process.platform` 只允许出现在 `src/paths.ts` 与 `src/main/platform.ts`。禁止 `child_process`（含 `node:child_process`）、`0.0.0.0`、`globalShortcut`、`openExternal`、`setLoginItemSettings`、`eval(`、`new Function(`、`dangerouslySetInnerHTML`、`fetch(`、`XMLHttpRequest`、`WebSocket`，以及 `http(s)://` URL。允许主机名为 `127.0.0.1` 的 URL，以及 `http://json-schema.org/draft-07/schema#`。
+  - CI 在 typecheck 之前增加 `pnpm format:check`。
+- 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm typecheck`、`pnpm test`（11 项）、`pnpm format:check` 通过。语义核对：用 TypeScript 解析格式化前后的源文件，展开括号后比较词法叶子，忽略空白、换行和尾随逗号；唯一额外记号是接口末成员补上的分号（`src/protocol.ts` 1 处、`src/state.ts` 3 处），不改变类型。临时在 `src/state.ts` 第 171–172 行加入 `process.platform` 与 `node:child_process` 后，边界测试失败并报告 `src/state.ts:171 process.platform`、`src/state.ts:172 child_process`，随后已还原。Windows / macOS 未在本机执行。
+- 遗留：C6–C12 未在本切片处理。README 未改。三平台 CI 结果见本 PR 的 GitHub Actions。

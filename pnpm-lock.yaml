@@ -39,6 +39,9 @@ importers:
       playwright:
         specifier: ^1.58.0
         version: 1.63.0
+      prettier:
+        specifier: ^3.9.8
+        version: 3.9.8
       tsx:
         specifier: ^4.20.0
         version: 4.23.15
@@ -729,6 +732,11 @@ packages:
   postject@1.0.0-alpha.6:
     resolution: {integrity: sha512-b9Eb8h2eVqNE8edvKdwqkrY6O7kAwmI8kcnBv1NScolYJbo59XUF0noFq+lxbC1yN20bmC0WBEbDC5H/7ASb0A==}
     engines: {node: '>=14.0.0'}
+    hasBin: true
+
+  prettier@3.9.8:
+    resolution: {integrity: sha512-WRFq3Wn3WId7LLROfMLdH7xaFr2jR62wU8nLO6rQUOLOxNZUviyJQs1M0iIhLexSFy+L+w0ch66wtoO2jRjG0A==}
+    engines: {node: '>=14'}
     hasBin: true
 
   progress@2.0.3:
@@ -1469,6 +1477,8 @@ snapshots:
   postject@1.0.0-alpha.6:
     dependencies:
       commander: 9.5.0
+
+  prettier@3.9.8: {}
 
   progress@2.0.3: {}
 

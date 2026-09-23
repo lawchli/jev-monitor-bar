@@ -40,7 +40,8 @@ export function ReplayView({replay, now, onExit}: {replay: ReplayData; now: numb
   const pageBridge = useMemo<MonitorBridge>(
     () => ({
       snapshot: async () => snapshot,
-      page: async query => pageReplay(replay.events, index, query),
+      // An empty replay page is the start of the file, not a dropped live memory window.
+      page: async query => ({events: pageReplay(replay.events, index, query), truncated: false}),
       status: async () => {
         throw new Error('回放不读取实时状态');
       },

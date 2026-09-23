@@ -10,6 +10,7 @@ import {
   laterAttemptKeys,
   runSummary,
   timelineItems,
+  timelineWindow,
 } from '../src/renderer/expanded/model';
 
 function at(second: number): string {
@@ -195,9 +196,11 @@ test('rule override chain keeps each present step and omits a model source', () 
       {decision_id: 'd1', action_id: 'act', attempt_id: 't1'},
     ),
   ]);
-  const chain = 'JEV 选择 A → 规则覆盖为 B（规则 X · 来源 Y） → 实际执行 B → 验证：失败';
+  const chain = 'JEV 选择 A → 规则覆盖为 B（规则 X · 来源 Y） → 已执行待验证 B → 验证：失败';
   assert.equal(decisionChain(overridden, 'd1'), chain);
   assert.equal(decisionCards(overridden).find(card => card.id === 'd1')?.chain, chain);
+  assert.equal(decisionChain(overridden, 'd1').includes('实际执行'), false);
+  assert.equal(decisionChain(overridden, 'd1').includes('验证：成功'), false);
   assert.equal(decisionChain(overridden, 'missing'), '');
 
   const modeled = play([
@@ -209,7 +212,8 @@ test('rule override chain keeps each present step and omits a model source', () 
       {decision_id: 'd1', action_id: 'act', attempt_id: 't1'},
     ),
   ]);
-  assert.equal(decisionChain(modeled, 'd1'), 'JEV 选择 A → 实际执行 A');
+  assert.equal(decisionChain(modeled, 'd1'), 'JEV 选择 A → 应用选择/待执行 A');
+  assert.equal(decisionChain(modeled, 'd1').includes('实际执行'), false);
 
   const chosen = play([event(1, 'decision.resolved', {kind: 'choice', choice: 'A'}, decisionIds('d1'))]);
   assert.equal(decisionChain(chosen, 'd1'), 'JEV 选择 A');
@@ -223,8 +227,9 @@ test('rule override chain keeps each present step and omits a model source', () 
       {decision_id: 'd1', action_id: 'act', attempt_id: 't1'},
     ),
   ]);
-  assert.equal(decisionChain(confirmed, 'd1'), 'JEV 选择 A → 实际执行 A');
+  assert.equal(decisionChain(confirmed, 'd1'), 'JEV 选择 A → 应用选择/待执行 A');
   assert.equal(decisionChain(confirmed, 'd1').includes('规则覆盖'), false);
+  assert.equal(decisionChain(confirmed, 'd1').includes('实际执行'), false);
 });
 
 test('a rule action without a decision is its own card', () => {
@@ -254,8 +259,9 @@ test('a rule action without a decision is its own card', () => {
   assert.ok(rule);
   assert.equal(rule.badge, '规则决策');
   assert.equal(rule.chain.includes('JEV'), false);
-  assert.equal(rule.chain, '规则决策（规则 安全 · 来源 策略） → 实际执行 停下 → 验证：成功');
-  assert.equal(cards.find(card => card.id === 'd1')?.chain, 'JEV 选择 A → 实际执行 A');
+  assert.equal(rule.chain, '规则决策（规则 安全 · 来源 策略） → 应用选择/待执行 停下 → 验证：成功');
+  assert.equal(rule.chain.includes('实际执行'), false);
+  assert.equal(cards.find(card => card.id === 'd1')?.chain, 'JEV 选择 A → 应用选择/待执行 A');
   assert.equal(
     cards.some(card => card.kind === 'decision' && card.chain.includes('停下')),
     false,
@@ -434,6 +440,79 @@ test('timeline marks events whose clocks differ by more than five seconds', () =
   assert.equal(items[1].occurredText, formatClock(items[1].occurredAt));
   assert.equal(items[1].receivedText, formatClock(items[1].receivedAt));
   assert.equal(items[2].typeText, '进度更新');
+});
+
+test('execution stage follows started, completed, and verification instead of selection', () => {
+  const ids = {decision_id: 'd1', action_id: 'act', attempt_id: 't1'};
+  const choice = [event(1, 'decision.resolved', {kind: 'choice', choice: 'A'}, decisionIds('d1'))];
+  const selected = (action: string, source: 'model' | 'rule' | 'application', extra: Payload = {}) =>
+    event(2, 'action.selected', {action, source, ...extra}, ids);
+
+  const started = play([...choice, selected('A', 'model'), event(3, 'action.started', {}, ids)]);
+  assert.equal(decisionChain(started, 'd1'), 'JEV 选择 A → 执行中 A');
+  assert.equal(/已执行|验证|实际执行|应用选择/.test(decisionChain(started, 'd1')), false);
+
+  const completed = play([
+    ...choice,
+    selected('A', 'model'),
+    event(3, 'action.started', {}, ids),
+    event(4, 'action.completed', {}, ids),
+  ]);
+  assert.equal(decisionChain(completed, 'd1'), 'JEV 选择 A → 已执行待验证 A');
+  assert.equal(decisionChain(completed, 'd1').includes('验证：'), false);
+  assert.equal(decisionChain(completed, 'd1').includes('实际执行'), false);
+
+  const failed = play([...choice, selected('A', 'model'), event(3, 'action.failed', {reason: 'timeout'}, ids)]);
+  assert.equal(decisionChain(failed, 'd1'), 'JEV 选择 A → 执行失败 A');
+  assert.equal(decisionChain(failed, 'd1').includes('已执行待验证'), false);
+
+  const cancelled = play([...choice, selected('A', 'model'), event(3, 'action.cancelled', {}, ids)]);
+  assert.equal(decisionChain(cancelled, 'd1'), 'JEV 选择 A → 执行取消 A');
+
+  const reselected = play([...choice, selected('B', 'application')]);
+  const reselection = decisionChain(reselected, 'd1');
+  assert.equal(reselection, 'JEV 选择 A → 应用覆盖为 B → 应用选择/待执行 B');
+  assert.equal(reselection.includes('规则'), false);
+  assert.equal(reselection.includes('来源'), false);
+  assert.equal(reselection.includes('未提供'), false);
+  assert.equal(reselection.includes('实际执行'), false);
+
+  const adopted = play([...choice, selected('A', 'application')]);
+  assert.equal(decisionChain(adopted, 'd1'), 'JEV 选择 A → 应用选择/待执行 A');
+  assert.equal(decisionChain(adopted, 'd1').includes('应用覆盖'), false);
+
+  const ruleOnly = play([
+    event(
+      1,
+      'action.selected',
+      {action: '停下', source: 'rule', rule: '安全', rule_source: '策略'},
+      {action_id: 'rule-act', attempt_id: 't9'},
+    ),
+  ]);
+  const rule = decisionCards(ruleOnly).find(card => card.kind === 'rule');
+  assert.equal(rule?.chain, '规则决策（规则 安全 · 来源 策略） → 应用选择/待执行 停下');
+  assert.equal(rule?.chain.includes('验证'), false);
+  assert.equal(rule?.chain.includes('实际执行'), false);
+});
+
+test('timeline window can move to the first event and stays pinned when later events arrive', () => {
+  const items = Array.from({length: 1200}, (_value, index) => ({cursor: index + 1}));
+  const latest = timelineWindow(items, null, 500);
+  assert.deepEqual([latest[0].cursor, latest.at(-1)?.cursor, latest.length], [701, 1200, 500]);
+  const middle = timelineWindow(items, latest[0].cursor, 500);
+  assert.deepEqual([middle[0].cursor, middle.at(-1)?.cursor], [202, 701]);
+  const first = timelineWindow(items, middle[0].cursor, 500);
+  assert.equal(first[0].cursor, 1);
+  assert.equal(first.at(-1)?.cursor, 202);
+  const pinned = timelineWindow(items, 600, 500).map(item => item.cursor);
+  const extended = timelineWindow(
+    Array.from({length: 1800}, (_value, index) => ({cursor: index + 1})),
+    600,
+    500,
+  ).map(item => item.cursor);
+  assert.deepEqual(pinned, extended);
+  assert.equal(pinned[0], 101);
+  assert.equal(pinned.at(-1), 600);
 });
 
 test('decision cards stay in reverse time order and cap at 50', () => {

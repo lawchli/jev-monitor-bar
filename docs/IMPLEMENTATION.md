@@ -452,3 +452,16 @@
   - 仓库里原来没有 `docs/STATUS.md`。放入 `9537853` 的历史快照，并在文末追加更正：快照里「8 个 PR、P1-08/09 未开工」只代表写入当时，不能当派工依据。快照原文未删。
 - 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm install` 报告锁文件已一致；`pnpm typecheck` 通过；`pnpm test` 116 项通过；`pnpm format:check` 通过。同一台机器 Python 3.12.3 上 `python -m unittest discover -s python/tests` 20 项通过。未跑 Python 3.9 / 3.13。未做原生 Windows / macOS 窗口、可见延迟、30 分钟负载、打包或 Defender。三平台 CI 以本提交推送后的 Actions 为准。
 - 遗留：A1–A10 未修。`--fresh` 两套实现并存。M5 未开始。原生 Windows、打包、Defender 未完成。
+
+## 09 — 接入展开视图修正：选择不写成已执行
+
+- 日期：2026-09-23
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交。来源：`edad472`（`cursor/p1-06-expanded-view-9f65`，PR #7）
+- 内容：集成分支当时停在 P1-06 的 `8256599`，没有 `edad472`。仅有 `action.selected` 仍写成「实际执行」，时间线也只能看最近 500 条，所以不是已有的等价修复。用 `git merge edad472` 把该提交接进来，没有另写一份。
+  - 决策链只把选定写成「应用选择/待执行」；有 `action.started` 才写「执行中」；`action.completed` 且尚未验证写「已执行待验证」；失败与取消分别写「执行失败」「执行取消」。验证结果只在有 `verification.completed` 时追加。`source: application` 且与 Choice 不同时写「应用覆盖为 B」，不写规则名或来源。与 Choice 相同则不写覆盖。`source: rule` 且动作不同时仍写「规则覆盖为 B（规则 X · 来源 Y）」。
+  - 时间线仍最多渲染 500 条。跟随最新时窗口在末尾；「加载更早」先在已加载事件里把窗口前移，到已加载的起点才向 `page()` 要更早的 100 条。暂停跟随时记住当前视口里的事件，之后的快照即使不再包含这些行，视口和已选详情也不跳走。`page` 的 IPC 结果改为 `{events, truncated}`。该 run 的事件曾被移出内存窗口，且这次更早分页为空时，`truncated` 为 true，按钮写「更早的事件已超出保留窗口」。
+  - 冲突在 `docs/IMPLEMENTATION.md`、`src/main/ipc-api.ts`、`src/store.ts`。保留 P1-09 逐行校验并脱敏的 `exportLines`，并加上 `historyTruncated`。回放的 `pageReplay` 仍只读播放头之前的前缀，桥接成 `{events, truncated: false}`，空页写「没有更早的事件」，不把回放文件的截断说成内存窗口淘汰。
+- 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（123 通过）、`pnpm build` 通过。未再启动 Electron 窗口。Windows / macOS 未在本机执行。三平台 CI 以本提交推送后的 Actions 为准。
+- 遗留：同记录 08。展开视图的连接状态、决策链空格和 README 仍未改。

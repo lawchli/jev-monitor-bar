@@ -568,16 +568,21 @@ test('loading earlier replay events reads the prefix instead of stopping', async
     });
     const items = () => dom.window.document.querySelectorAll('[data-testid="timeline-item"]');
     const older = () => dom.window.document.querySelector('[data-testid="timeline-load-older"]');
+    const cursors = () => Array.from(items(), node => Number((node as Element).getAttribute('data-cursor')));
     assert.equal(items().length, 400);
     assert.equal(older()?.textContent, '加载更早');
     await act(async () => {
       older()?.dispatchEvent(new dom.window.MouseEvent('click', {bubbles: true}));
     });
-    assert.equal(items().length, 450);
+    assert.equal(cursors()[0], 1);
+    assert.ok(cursors().length <= 500);
     assert.equal(older()?.textContent, '加载更早');
+    assert.equal(dom.window.document.body.textContent?.includes('没有更早的事件'), false);
+    assert.equal(dom.window.document.body.textContent?.includes('超出保留窗口'), false);
     await act(async () => {
       older()?.dispatchEvent(new dom.window.MouseEvent('click', {bubbles: true}));
     });
     assert.equal(older()?.textContent, '没有更早的事件');
+    assert.equal(cursors()[0], 1);
   });
 });

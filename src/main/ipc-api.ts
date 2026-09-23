@@ -1,5 +1,5 @@
-import type {ExportResult, PageQuery, ReceiverStatus, ReplayData, Snapshot, WindowMode} from '../ipc';
-import {validateEvent, type StoredEvent} from '../protocol';
+import type {EventPage, ExportResult, PageQuery, ReceiverStatus, ReplayData, Snapshot, WindowMode} from '../ipc';
+import {validateEvent} from '../protocol';
 import {parseReplay, exportFileName} from '../replay';
 import {sanitizeEvent} from '../redact';
 import type {EventStore} from '../store';
@@ -82,10 +82,12 @@ export function createMonitorHandlers(opts: MonitorHandlerOptions) {
       const id = optionalRunId(runId);
       return opts.store ? opts.store.snapshot(id) : emptySnapshot();
     },
-    page(event: IpcSender, query?: unknown): StoredEvent[] {
+    page(event: IpcSender, query?: unknown): EventPage {
       guard(event);
       const parsed = parsePage(query);
-      return opts.store ? opts.store.page(parsed) : [];
+      if (!opts.store) return {events: [], truncated: false};
+      const events = opts.store.page(parsed);
+      return {events, truncated: events.length === 0 && opts.store.historyTruncated(parsed)};
     },
     status(event: IpcSender): ReceiverStatus {
       guard(event);

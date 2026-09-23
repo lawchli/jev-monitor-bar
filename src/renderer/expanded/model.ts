@@ -249,16 +249,37 @@ function verificationLink(attempt: Attempt | undefined): string | undefined {
   return '验证：未知';
 }
 
+function sameChoice(attempt: Attempt | undefined, decision: Decision): boolean {
+  const action = attempt?.selected?.payload.action;
+  const resolved = decision.resolved?.payload;
+  return Boolean(action && resolved?.kind === 'choice' && resolved.choice !== undefined && action === resolved.choice);
+}
+
 function overrideLink(attempt: Attempt | undefined, decision: Decision): string | undefined {
   const payload = attempt?.selected?.payload;
-  if (!payload || payload.source !== 'rule' || !payload.action) return undefined;
+  if (!payload?.action || sameChoice(attempt, decision)) return undefined;
+  if (payload.source === 'rule') {
+    const rule = payload.rule || NOT_PROVIDED;
+    const ruleSource = payload.rule_source || NOT_PROVIDED;
+    return `规则覆盖为 ${payload.action}（规则 ${rule} · 来源 ${ruleSource}）`;
+  }
+  // Application reselection is not a rule; do not invent a rule name or source.
   const resolved = decision.resolved?.payload;
-  // A rule that selects the same Choice is not an override.
-  if (resolved?.kind === 'choice' && resolved.choice !== undefined && payload.action === resolved.choice)
-    return undefined;
-  const rule = payload.rule || NOT_PROVIDED;
-  const ruleSource = payload.rule_source || NOT_PROVIDED;
-  return `规则覆盖为 ${payload.action}（规则 ${rule} · 来源 ${ruleSource}）`;
+  if (payload.source === 'application' && resolved?.kind === 'choice' && resolved.choice !== undefined)
+    return `应用覆盖为 ${payload.action}`;
+  return undefined;
+}
+
+function executionLink(attempt: Attempt | undefined): string | undefined {
+  if (!attempt) return undefined;
+  const action = attempt.selected?.payload.action;
+  const text = (label: string) => (action ? `${label} ${action}` : label);
+  if (attempt.terminal?.type === 'action.completed') return text('已执行待验证');
+  if (attempt.terminal?.type === 'action.failed') return text('执行失败');
+  if (attempt.terminal?.type === 'action.cancelled') return text('执行取消');
+  if (attempt.started) return text('执行中');
+  if (attempt.selected) return text('应用选择/待执行');
+  return undefined;
 }
 
 function jevLink(decision: Decision): string | undefined {
@@ -296,8 +317,8 @@ export function decisionChain(run: RunState, decisionId: string): string {
   const attempt = latestAttempt(attemptsFor(run, decisionId));
   const override = overrideLink(attempt, decision);
   if (override) parts.push(override);
-  const action = attempt?.selected?.payload.action;
-  if (action) parts.push(`实际执行 ${action}`);
+  const execution = executionLink(attempt);
+  if (execution) parts.push(execution);
   const verification = verificationLink(attempt);
   if (verification) parts.push(verification);
   return parts.join(' → ');
@@ -432,7 +453,8 @@ function ruleCard(attempt: Attempt): DecisionCardModel {
   const ruleSource = payload.rule_source || NOT_PROVIDED;
   const action = payload.action || attempt.action_id;
   const parts = [`规则决策（规则 ${rule} · 来源 ${ruleSource}）`];
-  if (payload.action) parts.push(`实际执行 ${payload.action}`);
+  const execution = executionLink(attempt);
+  if (execution) parts.push(execution);
   const verification = verificationLink(attempt);
   if (verification) parts.push(verification);
   return {
@@ -580,6 +602,21 @@ function isLate(event: StoredEvent): boolean {
   const received = Date.parse(event.received_at);
   if (!Number.isFinite(occurred) || !Number.isFinite(received)) return false;
   return Math.abs(received - occurred) > 5000;
+}
+
+/** At most `limit` rows ending at `endCursor`. A null anchor keeps the newest rows. */
+export function timelineWindow<T extends {cursor: number}>(
+  items: readonly T[],
+  endCursor: number | null,
+  limit: number,
+): T[] {
+  if (limit <= 0 || items.length === 0) return [];
+  if (endCursor === null) return items.slice(-limit);
+  let end = items.length - 1;
+  while (end >= 0 && items[end].cursor > endCursor) end--;
+  if (end < 0) return items.slice(0, Math.min(limit, items.length));
+  const start = Math.max(0, end + 1 - limit);
+  return items.slice(start, end + 1);
 }
 
 export function timelineItems(

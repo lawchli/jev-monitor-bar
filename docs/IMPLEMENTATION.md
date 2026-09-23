@@ -9,10 +9,10 @@
 | 里程碑 | 内容 | 状态 |
 | --- | --- | --- |
 | M0 | 核实 TypeSafe 接口、参考项目与技术选型 | 完成（记录 01） |
-| M1 | 协议、接收、持久化、状态聚合、脱敏；单元测试与三平台 CI | 部分完成：核心模块与测试已有；缺独立 JSON Schema 文件、协议说明文档、固定演示数据 |
-| M2 | Electron 主进程、平台模块、preload、Windows 置顶小窗 | 未开始 |
-| M3 | 紧凑/展开 UI、详情、时间线、断线提示、导出与回放 | 未开始 |
-| M4 | Python 发送器、示例宿主、`pnpm demo` | 未开始 |
+| M1 | 协议、接收、持久化、状态聚合、脱敏；单元测试与三平台 CI | 集成分支已有核心模块、JSON Schema、协议文档与模拟场景（记录 08）。A1–A10 未在本次合并中修复 |
+| M2 | Electron 主进程、平台模块、preload、Windows 置顶小窗 | 集成分支已有主进程、平台模块、preload 与窗口位置恢复（记录 08）。原生 Windows 窗口未验证 |
+| M3 | 紧凑/展开 UI、详情、时间线、断线提示、导出与回放 | 集成分支已有紧凑条、展开视图、导出与回放（记录 08） |
+| M4 | Python 发送器、示例宿主、`pnpm demo` | 集成分支已有 Python 发送器、示例宿主与 `pnpm demo`（记录 08） |
 | M5 | 接入文档、延迟与负载测试、Windows 实机验证与打包；macOS/Linux 适配 | 未开始 |
 
 ## 记录模板
@@ -431,3 +431,24 @@
   - 回放决策链和时间线仍用展开视图的 `decisionChain` / `TimelineTab`，本分支没有另写一份。超过 200 个运行的焦点、回放前缀分页、以及非整数 `cursor` 的拒绝都保持上一则的行为。
 - 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（50 项）通过，`pnpm build` 通过。Windows / macOS 窗口未验证。三平台 CI 见本 PR。
 - 遗留：同上一则。导出仍同步读取全部分段。README 未改。
+
+## 08 — 集成 P1-00 至 P1-09
+
+- 日期：2026-09-23
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交。合并提交：`c8f35b9`、`23ccdc9`、`c84b582`、`95aa9ef`、`25485d3`、`dc1c510`、`afd3e53`、`f3ed986`、`94d6ce5`、`258ca02`
+- 内容：在 `cursor/integrate-mvp-83b9`（起点 `e594e36`）上按固定 SHA `git merge`，不 cherry-pick。未合并 `9537853`。没有改 A1–A10 的产品逻辑，也没有改写记录 01–07。
+  - `32e2439` P1-00（PR #2）→ `c8f35b9`。冲突：`docs/IMPLEMENTATION.md`。保留记录 01–07，并追加 P1-00。
+  - `81e0117` P1-01（PR #4）→ `23ccdc9`。无冲突。祖先里的 P1-00 已在历史上，没有重放。
+  - `46bc2b2` P1-02（PR #5）→ `c84b582`。冲突：`docs/IMPLEMENTATION.md`。`docs/AUDIT.md` 自动合并：C6/C7/C9 的处理栏追加 P1-02 说明，main 上的问题、codex 审计附录和记录 07 的 HEAD 复核都还在。
+  - `98a719a` P1-03（PR #3）→ `95aa9ef`。冲突：`docs/IMPLEMENTATION.md`、`package.json`。脚本取并集，加入 `schema:export`。`docs/PROTOCOL.md`、`protocol/event.schema.json`、fixtures 采用 P1-03。
+  - `b74a7c2` P1-04（PR #9）→ `25485d3`。冲突：`docs/IMPLEMENTATION.md`。`src/main/index.ts` 自动合并，同时有 P1-02 的退出生命周期和 `windowStateFile`。
+  - `fcf974d` P1-05（PR #6）→ `dc1c510`。冲突：`docs/IMPLEMENTATION.md`。紧凑条是 `src/renderer/compact/`。
+  - `8256599` P1-06（PR #7）→ `afd3e53`。冲突：`docs/IMPLEMENTATION.md`。展开视图是 `src/renderer/expanded/`。`package.json` 并入 `jsdom`，并保留已有脚本。
+  - `cc0981f` P1-07（PR #8）→ `f3ed986`。冲突：`docs/IMPLEMENTATION.md`。CI 保留三平台 typecheck/test/build/format:check，以及 Python 3.9 与 3.13。
+  - `de08926` P1-08（PR #11）→ `94d6ce5`。冲突：`docs/IMPLEMENTATION.md`、`package.json`、`scripts/launch.mjs`。`scripts/fresh-runtime.mjs` 与 `scripts/runtime-fresh.mjs`，以及 `tests/launch-fresh.test.ts` 与 `tests/runtime-fresh.test.ts` 都留下。启动用 `applyLaunchEnv`：`pnpm demo` 把 `JEV_MONITOR_HOME` 和 `JEV_MONITOR_SESSION` 固定到仓库内 `.runtime/demo`。`--fresh` 先经 `freshRuntimeTarget` / `removeFreshRuntime`，再经 `deleteFreshRuntime(home, repoRoot)`；自定义 HOME 和外指符号链接都不删。两套实现还没收成一份。
+  - `dcf879c` P1-09（PR #12）→ `258ca02`。冲突：`docs/IMPLEMENTATION.md`。`src/store.ts` 自动合并：P1-02 的 cursor 高水位、run 淘汰和会话恢复还在，P1-09 逐行校验、脱敏、跳过损坏行的 `exportLines` 也在。没有用回放分支的占位紧凑条覆盖 P1-05。
+  - 仓库里原来没有 `docs/STATUS.md`。放入 `9537853` 的历史快照，并在文末追加更正：快照里「8 个 PR、P1-08/09 未开工」只代表写入当时，不能当派工依据。快照原文未删。
+- 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm install` 报告锁文件已一致；`pnpm typecheck` 通过；`pnpm test` 116 项通过；`pnpm format:check` 通过。同一台机器 Python 3.12.3 上 `python -m unittest discover -s python/tests` 20 项通过。未跑 Python 3.9 / 3.13。未做原生 Windows / macOS 窗口、可见延迟、30 分钟负载、打包或 Defender。三平台 CI 以本提交推送后的 Actions 为准。
+- 遗留：A1–A10 未修。`--fresh` 两套实现并存。M5 未开始。原生 Windows、打包、Defender 未完成。

@@ -135,6 +135,88 @@ test('fresh delete does not follow a symlink to another directory', async () => 
   }
 });
 
+test('custom home, outward symlink, and external session survive; demo fresh clears only in-repo demo', async () => {
+  const runtimeFresh = await load();
+  const {deleteFreshRuntime} = (await import(pathToFileURL(path.join(root, 'scripts/fresh-runtime.mjs')).href)) as {
+    deleteFreshRuntime(candidate: string, root?: string): string;
+  };
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'jev-fresh-accept-'));
+  const sessionText = '{"url":"http://127.0.0.1:9","token":"external"}';
+
+  function runFresh(env: NodeJS.ProcessEnv, repo: string, demo: boolean) {
+    const next = runtimeFresh.applyLaunchEnv(env, {demo, repoRoot: repo});
+    const home = next.JEV_MONITOR_HOME;
+    if (!home) throw new Error('launch env is missing JEV_MONITOR_HOME');
+    runtimeFresh.freshRuntimeTarget(next, {demo, repoRoot: repo});
+    deleteFreshRuntime(home, repo);
+    return next;
+  }
+
+  const linked = path.join(base, 'linked');
+  const linkedRepo = path.join(linked, 'repo');
+  const linkedOutside = path.join(linked, 'outside');
+  const linkedHome = path.join(linked, 'custom-home');
+  const linkedSession = path.join(linked, 'session.json');
+  fs.mkdirSync(linkedRepo, {recursive: true});
+  const linkedHomeFile = marker(linkedHome, 'data.txt');
+  fs.writeFileSync(linkedSession, sessionText);
+  const linkedOutsideFile = marker(linkedOutside, 'secret.txt');
+  fs.mkdirSync(path.join(linkedRepo, '.runtime'));
+  linkDir(linkedOutside, path.join(linkedRepo, '.runtime', 'demo'));
+  const linkedEnv = {JEV_MONITOR_HOME: linkedHome, JEV_MONITOR_SESSION: linkedSession};
+
+  const real = path.join(base, 'real');
+  const repo = path.join(real, 'repo');
+  const outside = path.join(real, 'outside');
+  const customHome = path.join(real, 'custom-home');
+  const sessionFile = path.join(real, 'session.json');
+  fs.mkdirSync(repo, {recursive: true});
+  const customFile = marker(customHome, 'data.txt');
+  fs.writeFileSync(sessionFile, sessionText);
+  const outsideFile = marker(outside, 'secret.txt');
+  const devFile = marker(path.join(repo, '.runtime', 'dev'));
+  const demoDir = path.join(repo, '.runtime', 'demo');
+  marker(demoDir, 'old.txt');
+  const outward = path.join(repo, 'outward');
+  linkDir(outside, outward);
+  const inherited = {JEV_MONITOR_HOME: customHome, JEV_MONITOR_SESSION: sessionFile};
+
+  try {
+    assert.throws(() => runFresh(linkedEnv, linkedRepo, true), /--fresh refuses to delete/);
+    assert.equal(linkedEnv.JEV_MONITOR_HOME, linkedHome);
+    assert.equal(linkedEnv.JEV_MONITOR_SESSION, linkedSession);
+    assert.equal(fs.lstatSync(path.join(linkedRepo, '.runtime', 'demo')).isSymbolicLink(), true);
+    kept(linkedOutsideFile);
+    kept(linkedHomeFile);
+    assert.equal(fs.readFileSync(linkedSession, 'utf8'), sessionText);
+
+    assert.throws(() => runFresh(inherited, repo, false), /refusing to delete/);
+    kept(customFile);
+    kept(devFile);
+    kept(outsideFile);
+    assert.equal(fs.readFileSync(path.join(demoDir, 'old.txt'), 'utf8'), 'keep');
+    assert.equal(fs.readFileSync(sessionFile, 'utf8'), sessionText);
+    assert.equal(fs.lstatSync(outward).isSymbolicLink(), true);
+
+    const env = runFresh(inherited, repo, true);
+    assert.equal(inherited.JEV_MONITOR_HOME, customHome);
+    assert.equal(inherited.JEV_MONITOR_SESSION, sessionFile);
+    assert.equal(env.JEV_MONITOR_HOME, path.resolve(repo, '.runtime', 'demo'));
+    assert.equal(env.JEV_MONITOR_SESSION, path.join(env.JEV_MONITOR_HOME, 'session.json'));
+    assert.notEqual(env.JEV_MONITOR_SESSION, sessionFile);
+    assert.equal(fs.existsSync(demoDir), false);
+    assert.equal(fs.existsSync(path.join(repo, '.runtime', 'demo', 'session.json')), false);
+    kept(customFile);
+    kept(devFile);
+    kept(outsideFile);
+    assert.equal(fs.readFileSync(sessionFile, 'utf8'), sessionText);
+    assert.equal(fs.lstatSync(outward).isSymbolicLink(), true);
+    assert.equal(fs.readFileSync(path.join(outward, 'secret.txt'), 'utf8'), 'keep');
+  } finally {
+    fs.rmSync(base, {recursive: true, force: true});
+  }
+});
+
 test('fresh delete of a real runtime directory does not remove a linked outside tree', async () => {
   const runtimeFresh = await load();
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'jev-fresh-inner-'));

@@ -505,3 +505,13 @@
   - 淘汰收成 `src/state.ts` 的 `selectRunToEvict`。已结束的 run 里丢掉 `ended_at` 最早的，否则丢掉 `last_received` 最早的；时间相同则保留先出现的。`EventStore.evictRun` 和 `replaySnapshot` 都调用它。实时存储原先用 `last_received` 给已结束 run 排序，现与这条规则对齐。
 - 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm typecheck` 通过；`pnpm exec tsx --test tests/replay.test.ts tests/store-recovery.test.ts` 16 项通过。未跑完整 `pnpm test`。未做原生 Windows / macOS 窗口、可见延迟、30 分钟负载、打包或 Defender。
 - 遗留：A1–A4、A8–A10 未在本分支处理。导出仍同步读取全部分段。回放主进程仍同步读取未超过 50 MiB 的文件。未做原生 Windows / macOS 窗口、可见延迟、30 分钟负载、打包或 Defender。
+
+## A8 — 收成一份 --fresh
+
+- 日期：2026-09-23
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：启动只删除一次，两套保护都还在。`freshRuntimeTarget` 先拒绝和本次目标不一致的自定义 `JEV_MONITOR_HOME`，不删除仓库外的目录。通过后只调用 `deleteFreshRuntime`：删除前用 `lstat` 拒绝路径上的符号链接，再用 `realpath` 确认目标是本仓库 `.runtime/dev` 或 `.runtime/demo`。对不上就抛错，不调用 `rm`。指向仓库外的符号链接和它外面的目录都保持原样。`removeFreshRuntime` 仍按原词法路径和符号链接规则拒绝，实际删除改为调用 `deleteFreshRuntime`。`applyLaunchEnv` 不变：`pnpm demo` 只在返回给子进程的环境里把 `JEV_MONITOR_HOME` 和 `JEV_MONITOR_SESSION` 设到 `.runtime/demo` 与其中的 `session.json`，不改写原来的外部会话文件。普通 `pnpm demo`（带 `--fresh`）仍会清掉仓库内 `.runtime/demo` 再启动。
+- 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm typecheck` 通过；`pnpm exec tsx --test tests/launch-fresh.test.ts tests/runtime-fresh.test.ts tests/demo-host.test.ts` 24 项通过。未做 Windows / macOS。
+- 遗留：符号链接检查与删除之间仍有替换窗口。A1–A7、A9、A10 未在本分支处理。

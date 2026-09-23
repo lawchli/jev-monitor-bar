@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import type {EventType, Payload, StoredEvent} from '../src/protocol';
-import {applyEvent, emptyRun, type RunState} from '../src/state';
+import {applyEvent, emptyRun, labels, type RunState} from '../src/state';
 import {formatClock} from '../src/renderer/view-model/common';
 import {
   attemptGroups,
@@ -195,9 +195,13 @@ test('rule override chain keeps each present step and omits a model source', () 
       {decision_id: 'd1', action_id: 'act', attempt_id: 't1'},
     ),
   ]);
-  const chain = 'JEV 选择 A → 规则覆盖为 B（规则 X · 来源 Y） → 实际执行 B → 验证：失败';
+  const chain = 'JEV 选择 A → 规则覆盖为 B（规则 X · 来源 Y） → 已执行 B → 验证：失败';
   assert.equal(decisionChain(overridden, 'd1'), chain);
   assert.equal(decisionCards(overridden).find(card => card.id === 'd1')?.chain, chain);
+  assert.equal(chain.includes('成功'), false);
+  assert.equal(chain.includes('待验证'), false);
+  assert.equal(chain.includes('实际执行'), false);
+  assert.equal(attemptGroups(overridden)[0].rows[0].statusText, labels.verification_failed);
   assert.equal(decisionChain(overridden, 'missing'), '');
 
   const modeled = play([
@@ -209,7 +213,10 @@ test('rule override chain keeps each present step and omits a model source', () 
       {decision_id: 'd1', action_id: 'act', attempt_id: 't1'},
     ),
   ]);
-  assert.equal(decisionChain(modeled, 'd1'), 'JEV 选择 A → 实际执行 A');
+  assert.equal(decisionChain(modeled, 'd1'), 'JEV 选择 A → 待执行 A');
+  assert.equal(decisionChain(modeled, 'd1').includes('已执行'), false);
+  assert.equal(decisionChain(modeled, 'd1').includes('成功'), false);
+  assert.equal(attemptGroups(modeled)[0].rows[0].statusText, labels.selected);
 
   const chosen = play([event(1, 'decision.resolved', {kind: 'choice', choice: 'A'}, decisionIds('d1'))]);
   assert.equal(decisionChain(chosen, 'd1'), 'JEV 选择 A');
@@ -223,8 +230,10 @@ test('rule override chain keeps each present step and omits a model source', () 
       {decision_id: 'd1', action_id: 'act', attempt_id: 't1'},
     ),
   ]);
-  assert.equal(decisionChain(confirmed, 'd1'), 'JEV 选择 A → 实际执行 A');
+  assert.equal(decisionChain(confirmed, 'd1'), 'JEV 选择 A → 待执行 A');
   assert.equal(decisionChain(confirmed, 'd1').includes('规则覆盖'), false);
+  assert.equal(decisionChain(confirmed, 'd1').includes('已执行'), false);
+  assert.equal(decisionChain(confirmed, 'd1').includes('成功'), false);
 });
 
 test('a rule action without a decision is its own card', () => {
@@ -254,12 +263,111 @@ test('a rule action without a decision is its own card', () => {
   assert.ok(rule);
   assert.equal(rule.badge, '规则决策');
   assert.equal(rule.chain.includes('JEV'), false);
-  assert.equal(rule.chain, '规则决策（规则 安全 · 来源 策略） → 实际执行 停下 → 验证：成功');
-  assert.equal(cards.find(card => card.id === 'd1')?.chain, 'JEV 选择 A → 实际执行 A');
+  assert.equal(rule.chain, '规则决策（规则 安全 · 来源 策略） → 验证：成功');
+  assert.equal(rule.statusText, labels.passed);
+  assert.equal(rule.chain.includes('实际执行'), false);
+  assert.equal(rule.chain.includes('待执行'), false);
+  assert.equal(rule.chain.includes('已执行'), false);
+  assert.equal(cards.find(card => card.id === 'd1')?.chain, 'JEV 选择 A → 待执行 A');
   assert.equal(
     cards.some(card => card.kind === 'decision' && card.chain.includes('停下')),
     false,
   );
+});
+
+test('execution phrases follow attempt facts and do not call a selection success', () => {
+  const ids = {decision_id: 'd1', action_id: 'act', attempt_id: 't1'};
+  const resolved = () => event(1, 'decision.resolved', {kind: 'choice', choice: 'A'}, decisionIds('d1'));
+  const selected = (action: string, source: 'model' | 'rule' | 'application') =>
+    event(2, 'action.selected', {action, source}, ids);
+
+  const onlySelected = play([resolved(), selected('A', 'model')]);
+  assert.equal(decisionChain(onlySelected, 'd1'), 'JEV 选择 A → 待执行 A');
+  assert.equal(/已执行|成功/.test(decisionChain(onlySelected, 'd1')), false);
+  assert.equal(attemptGroups(onlySelected)[0].rows[0].statusText, labels.selected);
+  assert.equal(labels.selected, '已选择');
+
+  const modelDiffers = play([resolved(), selected('B', 'model')]);
+  assert.equal(decisionChain(modelDiffers, 'd1'), 'JEV 选择 A → 待执行 B');
+  assert.equal(decisionChain(modelDiffers, 'd1').includes('规则覆盖'), false);
+  assert.equal(decisionChain(modelDiffers, 'd1').includes('应用改选'), false);
+
+  const started = play([resolved(), selected('A', 'model'), event(3, 'action.started', {}, ids)]);
+  assert.equal(decisionChain(started, 'd1'), 'JEV 选择 A → 执行中 A');
+  assert.equal(/已执行|成功/.test(decisionChain(started, 'd1')), false);
+  assert.equal(attemptGroups(started)[0].rows[0].statusText, labels.executing);
+  assert.equal(labels.executing, '执行中');
+
+  const unverified = play([
+    resolved(),
+    selected('A', 'model'),
+    event(3, 'action.started', {}, ids),
+    event(4, 'action.completed', {}, ids),
+  ]);
+  assert.equal(decisionChain(unverified, 'd1'), 'JEV 选择 A → 已执行待验证 A');
+  assert.equal(decisionChain(unverified, 'd1').includes('成功'), false);
+  assert.equal(attemptGroups(unverified)[0].rows[0].statusText, labels.unverified);
+  assert.equal(labels.unverified, '已执行待验证');
+
+  const failed = play([resolved(), selected('A', 'model'), event(3, 'action.failed', {reason: 'timeout'}, ids)]);
+  assert.equal(decisionChain(failed, 'd1'), 'JEV 选择 A → 执行失败 A');
+  assert.equal(attemptGroups(failed)[0].rows[0].statusText, labels.failed);
+
+  const cancelled = play([resolved(), selected('A', 'model'), event(3, 'action.cancelled', {}, ids)]);
+  assert.equal(decisionChain(cancelled, 'd1'), 'JEV 选择 A → 已取消 A');
+  assert.equal(attemptGroups(cancelled)[0].rows[0].statusText, labels.cancelled);
+
+  const unknownVerification = play([
+    resolved(),
+    selected('A', 'model'),
+    event(3, 'action.completed', {}, ids),
+    event(4, 'verification.completed', {checks: [{name: '门', observed: '未知', result: 'unknown'}]}, ids),
+  ]);
+  assert.equal(decisionChain(unknownVerification, 'd1'), 'JEV 选择 A → 已执行 A → 验证：未知');
+  assert.equal(attemptGroups(unknownVerification)[0].rows[0].statusText, labels.unknown);
+
+  const reselected = play([resolved(), selected('B', 'application')]);
+  const reselectedChain = decisionChain(reselected, 'd1');
+  assert.equal(reselectedChain, 'JEV 选择 A → 应用改选为 B → 待执行 B');
+  assert.equal(reselectedChain.includes('规则'), false);
+  assert.equal(/已执行|成功/.test(reselectedChain), false);
+  assert.equal(attemptGroups(reselected)[0].rows[0].statusText, labels.selected);
+
+  const direct = play([
+    event(
+      1,
+      'action.selected',
+      {action: '停下', source: 'rule', rule: '安全', rule_source: '策略'},
+      {
+        action_id: 'rule-act',
+        attempt_id: 't9',
+      },
+    ),
+  ]);
+  const directCard = decisionCards(direct).find(card => card.kind === 'rule');
+  assert.ok(directCard);
+  assert.equal(directCard.chain, '规则决策（规则 安全 · 来源 策略） → 待执行 停下');
+  assert.equal(directCard.statusText, labels.selected);
+  assert.equal(/已执行|成功/.test(directCard.chain), false);
+  assert.equal(directCard.chain.includes('JEV'), false);
+
+  const directDone = play([
+    event(
+      1,
+      'action.selected',
+      {action: '停下', source: 'rule', rule: '安全', rule_source: '策略'},
+      {
+        action_id: 'rule-act',
+        attempt_id: 't9',
+      },
+    ),
+    event(2, 'action.completed', {}, {action_id: 'rule-act', attempt_id: 't9'}),
+  ]);
+  const doneCard = decisionCards(directDone).find(card => card.kind === 'rule');
+  assert.ok(doneCard);
+  assert.equal(doneCard.chain, '规则决策（规则 安全 · 来源 策略） → 已执行待验证 停下');
+  assert.equal(doneCard.statusText, labels.unverified);
+  assert.equal(doneCard.chain.includes('成功'), false);
 });
 
 test('attempts group by action and number retries in order', () => {

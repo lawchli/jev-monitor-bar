@@ -452,3 +452,16 @@
   - 仓库里原来没有 `docs/STATUS.md`。放入 `9537853` 的历史快照，并在文末追加更正：快照里「8 个 PR、P1-08/09 未开工」只代表写入当时，不能当派工依据。快照原文未删。
 - 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm install` 报告锁文件已一致；`pnpm typecheck` 通过；`pnpm test` 116 项通过；`pnpm format:check` 通过。同一台机器 Python 3.12.3 上 `python -m unittest discover -s python/tests` 20 项通过。未跑 Python 3.9 / 3.13。未做原生 Windows / macOS 窗口、可见延迟、30 分钟负载、打包或 Defender。三平台 CI 以本提交推送后的 Actions 为准。
 - 遗留：A1–A10 未修。`--fresh` 两套实现并存。M5 未开始。原生 Windows、打包、Defender 未完成。
+
+## A1/A4 — 展开视图区分待执行与历史视口
+
+- 日期：2026-09-23
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：只做 A1 和 A4，起点是 `8e1eb65`。没有改 `src/replay.ts`，也没有改紧凑条。
+  - A1：`decisionChain` 和规则卡不再写「实际执行」。只有 `action.selected` 时链上是「待执行」，状态字仍是 `labels.selected`（已选择）。有 `action.started` 且没有终态是「执行中」。`action.completed` 且没有 verification 是「已执行待验证」，不写成功。`action.failed` 是「执行失败」，`action.cancelled` 是「已取消」。验证结果只在有 verification 时写成「验证：成功 / 失败 / 未知」。`action.completed` 并且已经有 verification 时，执行段写成「已执行」，成功或失败只出现在验证段，避免和「已执行待验证」互相矛盾。`source=rule` 且动作和 Choice 不同时仍写「规则覆盖为 B（规则 X · 来源 Y）」。`source=application` 且动作和模型选择不同时写「应用改选为」，不编造规则名或来源。`source=model` 不写成规则覆盖。规则直接决策且只有 selected 时，链是「规则决策… → 待执行 …」。
+  - A4：窗口计算抽到 `visibleTimelineItems` 和 `shiftTimelineWindow`。跟随最新时渲染过滤后的最后 500 条。暂停跟随或加载更早后，视口钉在当前这批 cursor 上；内存里已经有更早事件时先移动窗口，不把它们用 `slice(-500)` 丢掉，也不因此显示「没有更早的事件」。桥返回空页才是没有更早事件。「回到最新」恢复跟随。暂停只停滚动，接收继续，没有新增挡住 ingest 的开关。快照尾部被换成更新的一批时，时间线保留本页已经见过的事件，避免暂停中的 cursor 从内存里消失。
+  - 紧凑条 `execStatus` 已经用 `attempt.status` 的 labels。只选择时是「已选择」，不是已执行或成功，所以没有改紧凑条。回放仍复用 `TimelineTab`。现有回放测试不依赖「永远贴在最新 500 条」，断言没有改，回放焦点逻辑也没有改。
+- 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm typecheck`（`tsc --noEmit`）通过；`pnpm test` 119 项通过。改过的文件 `prettier --check` 通过。未跑 Windows / macOS 窗口，未做 Electron 实机点击。
+- 遗留：A2、A3、A5–A10 未在本分支修改。时间线渲染上限仍是 500 条。快照本身仍只带最近 400 条；组件只保留这一页已经见过或分页加载的事件。

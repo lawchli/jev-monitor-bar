@@ -249,16 +249,46 @@ function verificationLink(attempt: Attempt | undefined): string | undefined {
   return '验证：未知';
 }
 
+function matchesChoice(action: string, decision: Decision): boolean {
+  const resolved = decision.resolved?.payload;
+  return resolved?.kind === 'choice' && resolved.choice !== undefined && action === resolved.choice;
+}
+
 function overrideLink(attempt: Attempt | undefined, decision: Decision): string | undefined {
   const payload = attempt?.selected?.payload;
-  if (!payload || payload.source !== 'rule' || !payload.action) return undefined;
-  const resolved = decision.resolved?.payload;
-  // A rule that selects the same Choice is not an override.
-  if (resolved?.kind === 'choice' && resolved.choice !== undefined && payload.action === resolved.choice)
+  if (!payload?.action) return undefined;
+  if (payload.source === 'rule') {
+    // A rule that selects the same Choice is not an override.
+    if (matchesChoice(payload.action, decision)) return undefined;
+    const rule = payload.rule || NOT_PROVIDED;
+    const ruleSource = payload.rule_source || NOT_PROVIDED;
+    return `规则覆盖为 ${payload.action}（规则 ${rule} · 来源 ${ruleSource}）`;
+  }
+  // Application reselection is not a rule. Do not invent a rule name or source.
+  if (payload.source === 'application') {
+    const resolved = decision.resolved?.payload;
+    if (resolved?.kind === 'choice' && resolved.choice !== undefined && !matchesChoice(payload.action, decision)) {
+      return `应用改选为 ${payload.action}`;
+    }
+  }
+  return undefined;
+}
+
+/** Chain phrase for execution facts. Verification outcome is appended separately. */
+function executionLink(attempt: Attempt | undefined): string | undefined {
+  const action = attempt?.selected?.payload.action;
+  if (!attempt || !action) return undefined;
+  const terminal = attempt.terminal?.type;
+  if (terminal === 'action.failed') return `执行失败 ${action}`;
+  if (terminal === 'action.cancelled') return `已取消 ${action}`;
+  if (attempt.verification) {
+    // Completed work can be named without calling it a success; the verification segment carries the result.
+    if (terminal === 'action.completed') return `已执行 ${action}`;
     return undefined;
-  const rule = payload.rule || NOT_PROVIDED;
-  const ruleSource = payload.rule_source || NOT_PROVIDED;
-  return `规则覆盖为 ${payload.action}（规则 ${rule} · 来源 ${ruleSource}）`;
+  }
+  if (terminal === 'action.completed') return `已执行待验证 ${action}`;
+  if (attempt.started) return `执行中 ${action}`;
+  return `待执行 ${action}`;
 }
 
 function jevLink(decision: Decision): string | undefined {
@@ -296,8 +326,8 @@ export function decisionChain(run: RunState, decisionId: string): string {
   const attempt = latestAttempt(attemptsFor(run, decisionId));
   const override = overrideLink(attempt, decision);
   if (override) parts.push(override);
-  const action = attempt?.selected?.payload.action;
-  if (action) parts.push(`实际执行 ${action}`);
+  const execution = executionLink(attempt);
+  if (execution) parts.push(execution);
   const verification = verificationLink(attempt);
   if (verification) parts.push(verification);
   return parts.join(' → ');
@@ -432,7 +462,8 @@ function ruleCard(attempt: Attempt): DecisionCardModel {
   const ruleSource = payload.rule_source || NOT_PROVIDED;
   const action = payload.action || attempt.action_id;
   const parts = [`规则决策（规则 ${rule} · 来源 ${ruleSource}）`];
-  if (payload.action) parts.push(`实际执行 ${payload.action}`);
+  const execution = executionLink(attempt);
+  if (execution) parts.push(execution);
   const verification = verificationLink(attempt);
   if (verification) parts.push(verification);
   return {

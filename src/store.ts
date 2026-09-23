@@ -121,6 +121,19 @@ export class EventStore extends EventEmitter {
       corruptLines: this.corruptLines,
     };
   }
+  page(query: {runId?: string; beforeCursor?: number; limit?: number} = {}) {
+    const raw = query.limit;
+    const requested = typeof raw === 'number' && Number.isFinite(raw) ? Math.trunc(raw) : 100;
+    const limit = Math.min(500, Math.max(1, requested));
+    const before = typeof query.beforeCursor === 'number' ? query.beforeCursor : undefined;
+    const rows = this.events.filter(event => {
+      if (query.runId !== undefined && event.run_id !== query.runId) return false;
+      if (before !== undefined && event.cursor >= before) return false;
+      return true;
+    });
+    rows.sort((a, b) => a.cursor - b.cursor);
+    return rows.slice(-limit);
+  }
   exportLines() {
     return this.files()
       .map(f => fs.readFileSync(path.join(this.directory, f), 'utf8'))

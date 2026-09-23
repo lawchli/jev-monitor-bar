@@ -78,13 +78,25 @@ export async function startServer(store: EventStore, sessionFile: string, port =
   server.headersTimeout = 3000;
   server.maxConnections = 32;
   await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(port, '127.0.0.1', resolve);
+    const onError = (error: Error) => reject(error);
+    server.once('error', onError);
+    server.listen(port, '127.0.0.1', () => {
+      server.removeListener('error', onError);
+      resolve();
+    });
   });
   const address = server.address() as {port: number};
   const session = {url: `http://127.0.0.1:${address.port}`, token};
-  fs.mkdirSync(path.dirname(sessionFile), {recursive: true});
-  fs.writeFileSync(sessionFile, JSON.stringify(session), {mode: 0o600});
+  try {
+    fs.mkdirSync(path.dirname(sessionFile), {recursive: true});
+    fs.writeFileSync(sessionFile, JSON.stringify(session), {mode: 0o600});
+  } catch (error) {
+    await new Promise<void>(resolve => {
+      server.close(() => resolve());
+      server.closeAllConnections();
+    });
+    throw error;
+  }
   return {
     server,
     session,

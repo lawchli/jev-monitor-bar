@@ -142,3 +142,13 @@
   - status 与 snapshot 的错误分开记录，各自在对应请求成功后清除。`runId` 变化后，已停止的请求不再写入错误。
 - 验证：Linux（Node 22.14.0、pnpm 11.19.0、Electron 42.11.6、`DISPLAY=:1`）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（27 项）、`pnpm build` 通过。Playwright 打开窗口：正常目录下标题为 JEV Monitor Bar，`window.monitor` 恰好 6 个方法，`status.url` 为 `http://127.0.0.1:<port>`，没有红色错误；把 `events` 做成文件后，窗口显示同一条 `EEXIST` `storageError`，snapshot 仍是空的且未在监听。Windows / macOS 窗口未验证。
 - 遗留：窗口位置记忆、正式 UI、托盘未做。Linux 窗口管理器尺寸和默认菜单同上一则 P1-01。C6–C12 未处理。README 未改。
+
+## P1-01 — --fresh 只删除本仓库的运行时目录
+
+- 日期：2026-09-23
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：`scripts/launch.mjs` 的 `--fresh` 只删除本仓库 `.runtime/dev` 或 `.runtime/demo`。候选路径先收成仓库下的词法尾部，再用 `realpath` 和 `lstat` 确认中间没有符号链接指向别处；对不上就拒绝删除并退出，不删除任意 `JEV_MONITOR_HOME`。判断在 `scripts/fresh-runtime.mjs`，测试在 `tests/launch-fresh.test.ts`。本分支没有演示宿主。
+- 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（35 项）、`pnpm build` 通过。Windows / macOS 见本 PR 的 GitHub Actions。
+- 遗留：同上一则 P1-01。符号链接检查与删除之间仍有替换窗口。

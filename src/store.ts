@@ -30,13 +30,24 @@ export class EventStore extends EventEmitter {
       this.segment = Math.max(this.segment, Number(f.slice(7, 15)));
       for (const line of fs.readFileSync(path.join(directory, f), 'utf8').split('\n')) {
         if (!line) continue;
+        let row: unknown;
         try {
-          const row = JSON.parse(line);
-          const {received_at, cursor, ...event} = row;
+          row = JSON.parse(line);
+        } catch {
+          // A torn tail that is not JSON has no cursor to preserve.
+          this.corruptLines++;
+          continue;
+        }
+        // A line can fail validation and still have consumed a cursor. Counting it stops the next ingest from reusing that id.
+        const parsedCursor = row !== null && typeof row === 'object' ? (row as {cursor?: unknown}).cursor : undefined;
+        if (typeof parsedCursor === 'number' && Number.isSafeInteger(parsedCursor)) {
+          this.cursor = Math.max(this.cursor, parsedCursor);
+        }
+        try {
+          const {received_at, cursor, ...event} = row as Record<string, unknown>;
           validateEvent(event);
           if (typeof received_at !== 'string' || !Number.isSafeInteger(cursor)) throw new Error('Invalid envelope');
-          this.cursor = Math.max(this.cursor, cursor);
-          this.remember(sanitizeEvent(row, diagnostics));
+          this.remember(sanitizeEvent(row as StoredEvent, diagnostics));
         } catch {
           this.corruptLines++;
         }
@@ -67,6 +78,17 @@ export class EventStore extends EventEmitter {
   private seq(e: MonitorEvent) {
     return JSON.stringify([e.run_id, e.producer_id, e.sequence]);
   }
+  private evictRun() {
+    let ended: RunState | undefined;
+    let oldest: RunState | undefined;
+    for (const run of this.runs.values()) {
+      const at = run.last_received ?? '';
+      if (!oldest || at < (oldest.last_received ?? '')) oldest = run;
+      if (run.ended_at !== undefined && (!ended || at < (ended.last_received ?? ''))) ended = run;
+    }
+    const victim = ended ?? oldest;
+    if (victim) this.runs.delete(victim.id);
+  }
   private remember(e: StoredEvent) {
     if (this.ids.has(e.event_id) || this.sequences.has(this.seq(e))) return;
     this.ids.add(e.event_id);
@@ -79,7 +101,7 @@ export class EventStore extends EventEmitter {
       this.runs.set(e.run_id, r);
     }
     applyEvent(r, e);
-    while (this.runs.size > 200) this.runs.delete(this.runs.keys().next().value!);
+    while (this.runs.size > 200) this.evictRun();
     while (this.events.length > this.maxEvents || this.bytes > 32 * 1024 * 1024) {
       const old = this.events.shift()!;
       this.ids.delete(old.event_id);

@@ -172,3 +172,30 @@
 - 内容：`scripts/launch.mjs` 的 `--fresh` 只删除本仓库 `.runtime/dev` 或 `.runtime/demo`。候选路径先收成仓库下的词法尾部，再用 `realpath` 和 `lstat` 确认中间没有符号链接指向别处；对不上就拒绝删除并退出，不删除任意 `JEV_MONITOR_HOME`。判断在 `scripts/fresh-runtime.mjs`，测试在 `tests/launch-fresh.test.ts`。本分支没有演示宿主。
 - 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（35 项）、`pnpm build` 通过。Windows / macOS 见本 PR 的 GitHub Actions。
 - 遗留：同上一则 P1-01。符号链接检查与删除之间仍有替换窗口。
+
+## P1-02 — 核心健壮性（C6 / C7 / C9）
+
+- 日期：2026-09-22
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：
+  - C6：重启恢复时，`JSON.parse` 成功且 `cursor` 为安全整数的行计入高水位，即使 schema 或信封校验失败；完全无法解析的行只计入 `corruptLines`，不抬高 cursor。下一条写入使用高水位加 1。
+  - C7：内存中的 run 超过 200 时，先淘汰 `ended_at` 已设置且 `last_received` 最早的一个；没有已结束的 run 时，再淘汰 `last_received` 最早的一个。`last_received` 相同则保留先插入的 run。
+  - C9：新增 `src/session.ts`。`writeSessionFile` 先创建目录，写入 `<file>.<pid>.<随机hex>.tmp`（mode 0600），再 `rename` 覆盖目标；遇到 `EPERM`/`EBUSY`/`EACCES` 时最多再试 5 次，第 n 次前用 `Atomics.wait` 等待 20×n ms；失败则删除临时文件后抛错。成功后总是尝试 `chmod` 0600。`readSessionFile` 在文件缺失、JSON 损坏或 `url`/`token` 不是字符串时返回 `undefined`。`removeSessionFileIfOwned` 只在文件中的 token 与传入值一致时删除。`startServer` 改用 `writeSessionFile`；`close()` 在 server 关闭后调用 `removeSessionFileIfOwned`。写入失败时沿用 P1-01：关掉已监听的端口和连接再抛出，并且 `listen` 成功后移除临时 `error` 监听。
+- 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（28 项，含边界测试）、`pnpm build` 通过。POSIX 上把已有 0644 会话文件重写后断言为 0600（本机 Linux 执行了该断言）。`renameSync` 用 mock 连续抛出两次 `EPERM` 后成功。Windows / macOS 未在本机执行，三平台 CI 见本 PR。
+- 遗留：C8、C10–C12 未处理。Windows 上 `mode` 和 `chmod` 不改变 ACL，会话文件仍依赖用户目录权限。`last_received` 相同时保留先插入的 run（规格未规定并列）。非 `EPERM`/`EBUSY`/`EACCES` 的 rename 错误不重试，但会删除临时文件再抛错，避免 token 留在 `.tmp`。README 未改。
+
+## P1-02 — 接上 P1-01 生命周期，并容错删除会话文件
+
+- 日期：2026-09-22
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：
+  - rebase 到 `cursor/p1-01-walking-skeleton-8677` 的 `c5a3a18`。`docs/IMPLEMENTATION.md` 保留 P1-01 与 P1-02 两段记录。
+  - `startServer` 保留 P1-01 的命名 `error` 监听：`listen` 成功后移除；`writeSessionFile` 失败时关闭端口和连接再抛出。没有用旧的永久 `once('error')` 盖掉这段。
+  - `removeSessionFileIfOwned` 在确认 token 后删除。`EPERM`/`EBUSY`/`EACCES` 最多再试 5 次，每次重试前重新读文件；token 已变或文件消失（`ENOENT`）就停止。读文件本身被锁住时同样重试，耗尽后抛错。
+  - `armQuit` 接住 `close()` 的拒绝，调用 `recordCleanupFailure` 把消息并进 `storageError` 并 `console.warn`，然后仍然 `quit`。回调自己抛错时也只告警，不留下未处理拒绝。
+- 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（38 项）、`pnpm build` 通过。会话发布失败会关掉监听；稍后的 `error` 事件不再被启动监听吞掉。删除重试、`ENOENT`、token 变化和退出时清理失败仍 quit 均有测试。Windows 文件锁用 mock，未在 Windows 实机占用文件。三平台 CI 见本 PR。
+- 遗留：同上一则 P1-02。退出时的 `storageError` 只留在进程内状态；窗口正在退出，界面不一定来得及刷新。

@@ -243,3 +243,31 @@
   - `platform.ts` 里 Linux X11 的注释收窄为：置顶与不抢焦点已在 Linux VM 验证。位置恢复不写进那句注释。
 - 验证：Linux VM（Ubuntu 24.04.4，XFCE / xfwm4，`DISPLAY=:1`，`scaleFactor` 0.984375，Electron 42.11.6）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`、`pnpm build` 通过。四轮探针（全新目录，每轮启动后 `xdotool windowmove`，等防抖写入，再 `SIGTERM`）：紧凑尺寸依次为 400×132、401×133、400×132、400×133，相对初始 400×132 的偏差不超过 1px，没有再按每轮约 6px 累加。展开 bounds 保持 440×640。Windows / macOS / Wayland 未验证。
 - 遗留：P2-06 清单请加：Windows 上最小化、最大化、还原后再重启；macOS 上启动和切换置顶时不闪 Dock、不激活，以及全屏 Space 之上是否可见。`'floating'` 在 macOS 全屏应用之上往往不够，是否改用更高等级要协调者决定，这次没有改规格。README 未改。
+
+## P1-05 — 紧凑模式 UI
+
+- 日期：2026-09-22
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：
+  - 新增 `compactModel(snapshot, status, now)`。任务名截断到 40 字；模拟数据、运行状态文字和颜色、连接状态来自已有的 `common` 纯函数。阶段取 `progress.phase`，没有则为「未知」。进度在有 `total` 时为 `completed/total`，只有 `completed` 时为「已完成 N 步」，否则为「未知」。运行时长从 `started_at` 到 `ended_at`，没有结束时间则到 `now`。
+  - 最新选择按 `later()` 取最新 decision：评估中为「正在评估候选」；失败为「失败」；Choice 显示 choice；Score 显示分数，有 legend 时附等级名（精确键，否则四舍五入到整数等级，再否则取数值最近的等级）；Noul 显示「是 N%」（`Math.round(noul * 100)`）。
+  - 实际动作为最新 attempt 的 `selected.payload.action`，来源标为「模型 / 规则 / 应用」。与对应 decision 的 choice 不同时标「已覆盖」。执行状态用该 attempt 的状态文字和颜色。最近事件取 `run.latest` 的发生时间和类型（心跳和丢弃计数本来就不进 `latest`）。其他未结束 run 的数量单独计数；下一个 run 按 `snapshot.runs` 顺序在未结束 run 中循环。
+  - `CompactView` 四行：状态点加文字、任务名、模拟徽标、连接、「置顶」「展开」；阶段 · 进度 · 时长；选择 → 动作 · 执行状态；最近事件，另有运行时显示「另有 N 个运行」并可切换。没有 run 时显示「等待宿主连接…」和接收端状态。`storageError` 为红色行，平台 notes 为一行「提示：…」。长文本用 CSS 截断，`title` 为全文。`data-testid`：`compact-root`、`compact-status`、`compact-run-name`、`compact-connection`、`compact-choice`、`compact-action`、`compact-exec-status`、`compact-expand`、`compact-pin`。
+  - 未改 `App.tsx`、`common.ts` 和构建脚本。`compact.css` 由 `CompactView` 引入，现有 esbuild 会打进 `app.css`。
+- 验证：Linux（Node 22.14.0、pnpm 11.19.0、Electron 42.11.6、`DISPLAY=:1`、X11；`XDG_SESSION_TYPE` 与 `WAYLAND_DISPLAY` 均为空）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（32 项，含边界测试）、`pnpm build` 通过。构建后用 Playwright 启动 Electron，向会话文件里的本机地址 POST 两条模拟 run。内容区约 403×107，四行都在视口内（末行 bottom 87）。界面为：状态「执行中」、任务名「模拟：整理季度报告」、「模拟数据」、连接「在线」、「汇总 · 2/5 · 1分09秒」、「打开完整报告 → 打开摘要 · 规则 · 已覆盖 · 执行中」、最近事件 `action.started`、「另有 1 个运行」。浅色背景 `rgb(246, 247, 249)`，深色背景 `rgb(20, 23, 28)`，合成截图在 Project 存储 `media/p1-05-compact-bar.png`。Windows / macOS 窗口未验证。
+- 遗留：README 未改。展开视图仍是占位。分数小数落到 legend 等级、Noul 百分比取整、失败决策文案、下一个 run 的循环顺序，见本 PR「需要协调」。默认紧凑窗口内容区只有约 107px，错误行和平台提示靠单行省略号塞进剩余高度，超长提示不会换行。
+
+## P1-05 — 跟随当前选择，覆盖只看关联决策
+
+- 日期：2026-09-22
+- harness：cursor-cloud-agent
+- model：grok
+- 提交：本条所在提交
+- 内容：
+  - rebase 到 P1-01 `c5a3a18`。`docs/IMPLEMENTATION.md` 的冲突保留「存储失败仍可显示」和「紧凑模式 UI」两段记录。
+  - `compactModel` 增加 `selectedRunId`。已指定选择时只用该 id 的完整 run 或摘要；详情还没到时不回退到另一个 run，列表里也没有该 id 时显示「正在读取」。未指定选择时仍用 `snapshot.run`，否则 `pickDefaultRun`。
+  - 「已覆盖」只比较最新 attempt 的 `decision_id` 所指向的 decision。没有关联，或该 decision 不是带 choice 的 Choice 时，不标覆盖。最新选择的展示仍按 `later()` 取最新 decision。
+- 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（40 项，含边界测试）、`pnpm build` 通过。三平台 CI 见本提交之后的 GitHub Actions。Windows / macOS 窗口未验证。
+- 遗留：同上一则 P1-05。Windows / macOS 窗口未验证。

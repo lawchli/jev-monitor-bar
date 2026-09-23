@@ -1,0 +1,38 @@
+.replay-banner {
+  margin: 0;
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--selected);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: var(--font-size-sm);
+}
+
+.replay-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.replay-controls button,
+.replay-controls input {
+  font: inherit;
+  color: var(--fg);
+}
+
+.replay-controls button {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 2px var(--space-sm);
+}
+
+.replay-controls button[aria-pressed='true'] {
+  border-color: var(--tone-active);
+  font-weight: 650;
+}
+
+.replay-controls input[type='range'] {
+  flex: 1;
+  min-width: 80px;
+}

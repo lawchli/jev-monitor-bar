@@ -387,3 +387,47 @@
   - `scripts/demo-host.mjs`：会话文件固定为 home 下的 `session.json`，不再读取继承的 `JEV_MONITOR_SESSION`。重定向、每个场景的序号和 20 秒就绪超时没有改。
 - 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（57 项）、`pnpm build` 通过。Windows / macOS 未在本机执行，交给 CI。未做桌面窗口验证。
 - 遗留：README 未改。本分支仍包含尚未合并的 P1-03 与 P1-05。
+
+## P1-09 — 导出与回放
+
+- 日期：2026-09-23
+- harness：cursor
+- model：grok
+- 提交：本条所在提交
+- 内容：
+  - 本条由 Cursor 云端 agent 完成。git 作者沿用环境里已经设好的 Cursor Agent（`cursoragent@cursor.com`），没有改 `user.name` / `user.email`，提交信息里也不另加署名。
+  - 分支从 `cursor/p1-06-expanded-view-9f65` 拉出，没有改 P1-04 或其他开放分支。保存对话框挂在当前窗口的 `webContents` 上，不依赖 P1-04 的位置记忆模块。
+  - 新增 `src/replay.ts`：`parseReplay` 只接收校验和脱敏函数，不导入 `node:*`。按行解析，兼容 `\r\n` 和文件开头的 BOM。普通事件缺少 `received_at` / `cursor` 时，用 `occurred_at` 和 1 起的行号补上。先校验再脱敏，坏行计数，最多保留 20000 条。`replaySnapshot` 用 `applyEvent` 重放到第 N 条，去重和 200 个 run 的淘汰与 `EventStore` 一致。
+  - IPC 只新增 `monitor:export`、`monitor:open-replay`。`exportEvents` 弹出保存框，默认文件名 `jev-monitor-export-<YYYYMMDD-HHMMSS>.jsonl`，写入 `store.exportLines()`。`openReplay` 只打开 `.jsonl`，超过 50 MiB 拒绝。取消对话框时导出返回 `{saved:false}`，回放返回 `null`。
+  - 展开视图增加「导出」「打开回放」。回放横幅为「回放：<文件名>（不影响实时接收）」，有进度条、上一条、下一条、播放/暂停、1×（800 ms/条）和 10×（80 ms/条）。三个页签复用 P1-06 的组件。退出回放回到实时视图。回放期间实时接收继续，时间线分页不读实时存储。
+- 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（43 项，含原先 38 项）通过，`pnpm build` 通过。同一环境 Electron 42.11.6、`DISPLAY=:1`：POST 三条模拟事件后切到展开模式，导出 923 字节的 JSONL（含「演示任务」），再打开该文件。横幅为「回放：jev-monitor-export-check.jsonl（不影响实时接收）」，位置从「第 3 / 3 条」变为「第 2 / 3 条」，`#app-root` 的 `data-cursor` 仍是 3。截图：展开页 `/opt/cursor/artifacts/p1-09-expanded.png`，回放页 `/opt/cursor/artifacts/p1-09-replay.png`。Windows / macOS 窗口未验证。
+- 遗留：P1-04 尚未并入本分支，多显示器位置记忆不在这次里。回放时间线的「加载更早」只查当前回放前缀，不查实时库。播放间隔是实现选择，计划没有写毫秒数。README 未改。三平台 CI 见本 PR。
+
+## P1-09 — 修正超过 200 个运行的空白回放，以及更早事件分页
+
+- 日期：2026-09-23
+- harness：cursor
+- model：grok
+- 提交：本条所在提交
+- 内容：
+  - 本条由 Cursor 云端 agent 完成，仍在 `cursor/p1-09-export-replay-973f` 上，不另开 PR。git 作者沿用环境里的 Cursor Agent，没有改 `user.name` / `user.email`。
+  - 未指定运行时，`replaySnapshot` 每个事件都把焦点移到该事件的运行，这样超过 200 个运行、最旧的被淘汰后，打开文件仍落在还在的运行上。指定的运行已经不在窗口里时，不再把事件滤成那个 id。
+  - 回放运行选择器在 `snapshot.runs` 非空时就显示，包括当前焦点运行已经不在前缀里的情况；没有焦点时用 `pickDefaultRun` 作为选择器的值。
+  - 「加载更早」改为对播放头之前的回放前缀分页（同一 `runId`、`cursor < beforeCursor`、按 cursor 排序、取最后 `limit` 条，`limit` 截到 1–500），不调用实时 bridge，也不调用 `EventStore.page`。时间线先只收到该运行最近 400 条，和实时快照一样。
+  - `parseReplay`：缺少 `cursor` 仍用 1 起的行号，缺少 `received_at` 仍用 `occurred_at`。字段在但 `cursor` 不是安全整数（含小数），或 `received_at` 不是字符串，记为无效行并跳过。空字符串 `received_at` 保留。负的安全整数仍保留。
+- 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（49 项）通过，`pnpm build` 通过。Windows / macOS 窗口未验证。三平台 CI 见本 PR。
+- 遗留：主进程仍同步读取未超过 50 MiB 的回放文件。50 MiB 边界没有走真实 `readBounded` 的临时文件测试。`replaySnapshot` 仍在 `src/replay.ts`。播放间隔未改。README 未改。
+
+## P1-09 — 导出改为逐行校验并脱敏
+
+- 日期：2026-09-23
+- harness：cursor
+- model：grok
+- 提交：本条所在提交
+- 内容：
+  - 本条由 Cursor 云端 agent 完成，仍在 `cursor/p1-09-export-replay-973f` 上，不另开 PR。git 作者沿用环境里的 Cursor Agent，没有改 `user.name` / `user.email`。
+  - `exportLines` 不再把分段文件原文拼在一起。每一段单独按行解析（去掉 BOM 和行尾 `\r`），校验通过后用 `sanitizeEvent(..., false)` 脱敏并丢掉 `diagnostic`，再写成自带换行的一行。损坏行、残缺行尾、以及已出现但不是安全整数的 `cursor` 都跳过，并在返回值 `skipped` 里计数。
+  - `monitor:export` 把 `skipped` 交给界面。成功导出时，跳过数大于 0 会写在「已导出 …」后面。
+  - 回放决策链和时间线仍用展开视图的 `decisionChain` / `TimelineTab`，本分支没有另写一份。超过 200 个运行的焦点、回放前缀分页、以及非整数 `cursor` 的拒绝都保持上一则的行为。
+- 验证：Linux（Node 22.14.0、pnpm 11.19.0）上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（50 项）通过，`pnpm build` 通过。Windows / macOS 窗口未验证。三平台 CI 见本 PR。
+- 遗留：同上一则。导出仍同步读取全部分段。README 未改。

@@ -5,6 +5,9 @@ declare module 'jsdom' {
     Node: typeof Node;
     navigator: Navigator;
     MouseEvent: typeof MouseEvent;
+    Event: typeof Event;
+    HTMLSelectElement: typeof HTMLSelectElement;
+    HTMLInputElement: typeof HTMLInputElement;
     close(): void;
   }
   export class JSDOM {

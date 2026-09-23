@@ -8,6 +8,8 @@ export const IPC = {
   changed: 'monitor:changed',
   setMode: 'monitor:set-mode',
   setPinned: 'monitor:set-pinned',
+  exportEvents: 'monitor:export',
+  openReplay: 'monitor:open-replay',
 } as const;
 
 export type WindowMode = 'compact' | 'expanded';
@@ -52,6 +54,20 @@ export interface Changed {
   runIds: string[];
 }
 
+export interface ExportResult {
+  saved: boolean;
+  path?: string;
+  bytes?: number;
+  skipped?: number;
+}
+
+export interface ReplayData {
+  file: string;
+  events: StoredEvent[];
+  invalidLines: number;
+  truncated: boolean;
+}
+
 export interface MonitorBridge {
   snapshot(runId?: string): Promise<Snapshot>;
   page(query: PageQuery): Promise<StoredEvent[]>;
@@ -59,4 +75,6 @@ export interface MonitorBridge {
   onChanged(listener: (change: Changed) => void): () => void;
   setMode(mode: WindowMode): Promise<WindowMode>;
   setPinned(pinned: boolean): Promise<boolean>;
+  exportEvents(): Promise<ExportResult>;
+  openReplay(): Promise<ReplayData | null>;
 }

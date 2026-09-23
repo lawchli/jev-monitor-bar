@@ -12,6 +12,8 @@ const bridge = {
   },
   setMode: (mode: WindowMode) => ipcRenderer.invoke(IPC.setMode, mode),
   setPinned: (pinned: boolean) => ipcRenderer.invoke(IPC.setPinned, pinned),
+  exportEvents: () => ipcRenderer.invoke(IPC.exportEvents),
+  openReplay: () => ipcRenderer.invoke(IPC.openReplay),
 } satisfies MonitorBridge;
 
 contextBridge.exposeInMainWorld('monitor', bridge);

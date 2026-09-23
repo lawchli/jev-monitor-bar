@@ -1,6 +1,18 @@
-import type {PageQuery, ReceiverStatus, Snapshot, WindowMode} from '../ipc';
-import type {StoredEvent} from '../protocol';
+import type {ExportResult, PageQuery, ReceiverStatus, ReplayData, Snapshot, WindowMode} from '../ipc';
+import {validateEvent, type StoredEvent} from '../protocol';
+import {parseReplay, exportFileName} from '../replay';
+import {sanitizeEvent} from '../redact';
 import type {EventStore} from '../store';
+
+export interface ReplayFileIO {
+  saveDialog(defaultPath: string): Promise<string | undefined>;
+  openDialog(): Promise<string | undefined>;
+  readBounded(file: string): ReplayReadResult;
+  write(file: string, contents: string): void;
+}
+
+export type ReplayReadResult =
+  {ok: true; text: string} | {ok: false; reason: 'too-large'} | {ok: false; reason: 'read-error'; message: string};
 
 export interface IpcSender {
   sender: unknown;
@@ -98,6 +110,31 @@ export function createMonitorHandlers(opts: MonitorHandlerOptions) {
       guard(event);
       if (typeof pinned !== 'boolean') throw new Error('Invalid pinned');
       return opts.controller.setPinned(pinned);
+    },
+    async exportEvents(event: IpcSender, files: ReplayFileIO): Promise<ExportResult> {
+      guard(event);
+      const selected = await files.saveDialog(exportFileName(new Date()));
+      if (!selected) return {saved: false};
+      const exported = opts.store ? opts.store.exportLines() : {text: '', skipped: 0};
+      files.write(selected, exported.text);
+      return {
+        saved: true,
+        path: selected,
+        bytes: Buffer.byteLength(exported.text),
+        skipped: exported.skipped,
+      };
+    },
+    async openReplay(event: IpcSender, files: ReplayFileIO): Promise<ReplayData | null> {
+      guard(event);
+      const selected = await files.openDialog();
+      if (!selected) return null;
+      const read = files.readBounded(selected);
+      if (!read.ok) {
+        if (read.reason === 'too-large') throw new Error('回放文件超过 50 MiB');
+        throw new Error(read.message);
+      }
+      const parsed = parseReplay(read.text, {validateEvent, sanitizeEvent});
+      return {file: selected, ...parsed};
     },
   };
 }

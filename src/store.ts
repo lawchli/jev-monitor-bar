@@ -156,9 +156,37 @@ export class EventStore extends EventEmitter {
     rows.sort((a, b) => a.cursor - b.cursor);
     return rows.slice(-limit);
   }
-  exportLines() {
-    return this.files()
-      .map(f => fs.readFileSync(path.join(this.directory, f), 'utf8'))
-      .join('');
+  exportLines(): {text: string; skipped: number} {
+    const records: string[] = [];
+    let skipped = 0;
+    // Each segment is parsed alone. A torn tail has no newline, so joining the raw files would glue it to the next record.
+    for (const name of this.files()) {
+      const raw = fs.readFileSync(path.join(this.directory, name), 'utf8');
+      const source = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+      for (const part of source.split('\n')) {
+        const line = part.endsWith('\r') ? part.slice(0, -1) : part;
+        if (!line) continue;
+        const record = exportRecord(line);
+        if (!record) {
+          skipped++;
+          continue;
+        }
+        records.push(JSON.stringify(record));
+      }
+    }
+    return {text: records.length === 0 ? '' : `${records.join('\n')}\n`, skipped};
+  }
+}
+
+function exportRecord(line: string): StoredEvent | undefined {
+  try {
+    const row = JSON.parse(line);
+    if (!row || typeof row !== 'object' || Array.isArray(row)) return undefined;
+    const {received_at, cursor, ...event} = row;
+    validateEvent(event);
+    if (typeof received_at !== 'string' || !Number.isSafeInteger(cursor)) return undefined;
+    return {...sanitizeEvent(event, false), received_at, cursor};
+  } catch {
+    return undefined;
   }
 }

@@ -274,9 +274,12 @@ function executionLink(attempt: Attempt | undefined): string | undefined {
   if (!attempt) return undefined;
   const action = attempt.selected?.payload.action;
   const text = (label: string) => (action ? `${label} ${action}` : label);
-  if (attempt.terminal?.type === 'action.completed') return text('已执行待验证');
+  // Once verification arrives, "pending verification" is stale; the verification link carries the result.
+  if (attempt.terminal?.type === 'action.completed') return text(attempt.verification ? '已执行' : '已执行待验证');
   if (attempt.terminal?.type === 'action.failed') return text('执行失败');
   if (attempt.terminal?.type === 'action.cancelled') return text('执行取消');
+  // Verification without a terminal event: the execution step is missing, so omit it instead of calling it pending.
+  if (attempt.verification) return undefined;
   if (attempt.started) return text('执行中');
   if (attempt.selected) return text('应用选择/待执行');
   return undefined;

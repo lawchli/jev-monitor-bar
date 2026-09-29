@@ -125,7 +125,13 @@ export function ExpandedView({
             {tab === 'decisions' ? <DecisionsTab cards={decisionCards(run)} /> : null}
             {tab === 'execution' ? <ExecutionTab groups={attemptGroups(run)} /> : null}
             {tab === 'timeline' ? (
-              <TimelineTab events={events} runId={run.id} bridge={bridge} retryKeys={laterAttemptKeys(run)} />
+              <TimelineTab
+                events={events}
+                runId={run.id}
+                bridge={bridge}
+                retryKeys={laterAttemptKeys(run)}
+                eventCount={run.event_count}
+              />
             ) : null}
           </div>
         </>

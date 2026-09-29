@@ -161,6 +161,7 @@ export function ReplayView({replay, now, onExit}: {replay: ReplayData; now: numb
                 runId={run.id}
                 bridge={pageBridge}
                 retryKeys={laterAttemptKeys(run)}
+                eventCount={run.event_count}
               />
             ) : null}
           </div>

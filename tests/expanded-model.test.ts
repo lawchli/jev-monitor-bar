@@ -196,10 +196,11 @@ test('rule override chain keeps each present step and omits a model source', () 
       {decision_id: 'd1', action_id: 'act', attempt_id: 't1'},
     ),
   ]);
-  const chain = 'JEV 选择 A → 规则覆盖为 B（规则 X · 来源 Y） → 已执行待验证 B → 验证：失败';
+  const chain = 'JEV 选择 A → 规则覆盖为 B（规则 X · 来源 Y） → 已执行 B → 验证：失败';
   assert.equal(decisionChain(overridden, 'd1'), chain);
   assert.equal(decisionCards(overridden).find(card => card.id === 'd1')?.chain, chain);
   assert.equal(decisionChain(overridden, 'd1').includes('实际执行'), false);
+  assert.equal(decisionChain(overridden, 'd1').includes('待验证'), false);
   assert.equal(decisionChain(overridden, 'd1').includes('验证：成功'), false);
   assert.equal(decisionChain(overridden, 'missing'), '');
 
@@ -259,7 +260,8 @@ test('a rule action without a decision is its own card', () => {
   assert.ok(rule);
   assert.equal(rule.badge, '规则决策');
   assert.equal(rule.chain.includes('JEV'), false);
-  assert.equal(rule.chain, '规则决策（规则 安全 · 来源 策略） → 应用选择/待执行 停下 → 验证：成功');
+  // Verification arrived without action.completed, so the execution step is omitted rather than called pending.
+  assert.equal(rule.chain, '规则决策（规则 安全 · 来源 策略） → 验证：成功');
   assert.equal(rule.chain.includes('实际执行'), false);
   assert.equal(cards.find(card => card.id === 'd1')?.chain, 'JEV 选择 A → 应用选择/待执行 A');
   assert.equal(

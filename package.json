@@ -13,7 +13,8 @@
     "start": "node scripts/launch.mjs",
     "demo": "node scripts/launch.mjs --demo --fresh",
     "demo:host": "node scripts/demo-host.mjs",
-    "schema:export": "tsx scripts/export-schema.ts"
+    "schema:export": "tsx scripts/export-schema.ts",
+    "loadtest": "tsx scripts/loadtest/run.mts"
   },
   "dependencies": {
     "ajv": "^8.17.1",

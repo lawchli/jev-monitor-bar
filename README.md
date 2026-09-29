@@ -2,7 +2,7 @@
 
 全平台、Windows 优先的只读决策监视小窗。宿主（运行 TypeSafe/JEV 的任务程序）发送摘要事件 → 本机鉴权接收 → 追加日志 → Electron/React 小窗。窗口里分开显示模型判断、应用选择、执行和验证，不控制宿主。此仓库独立于 `jev_zzz`。
 
-> 状态（2026-09-30）：可以从源码运行。紧凑条、展开视图、时间线、导出与回放、Python 发送器和 `pnpm demo` 已在同一份代码里，审计 A1–A8 的修复已接入（实施记录 09、10、A8、11），并在 Linux X11 虚拟机上走过一次 `pnpm demo` 闭环（记录 11）。还没有发布包。Windows 与 macOS 的原生窗口行为还没有实机验证，30 分钟负载和可见延迟也还没测。进度以 [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md) 为准，已知问题见 [`docs/AUDIT.md`](docs/AUDIT.md)。
+> 状态（2026-09-30）：可以从源码运行。紧凑条、展开视图、时间线、导出与回放、Python 发送器和 `pnpm demo` 已在同一份代码里，审计 A1–A8 的修复已接入（实施记录 09、10、A8、11），并在 Linux X11 虚拟机上走过一次 `pnpm demo` 闭环（记录 11）。`pnpm package` 能打出未签名的目录 zip，`pnpm smoke` 在 macOS 上自动走完闭环验收并测了可见延迟（记录 18、19）。Windows 发布包还没有在 Windows 上启动过，Windows 原生窗口行为和 Defender 扫描还没做，30 分钟负载还没测。进度以 [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md) 为准，已知问题见 [`docs/AUDIT.md`](docs/AUDIT.md)。
 
 ## 现在能做什么
 
@@ -37,7 +37,10 @@ pnpm typecheck
 pnpm test
 pnpm build
 python -m unittest discover -s python/tests -v
+pnpm smoke     # 用 Playwright 启动真实窗口，自动跑闭环验收、窗口断言和可见延迟；会在屏幕上开一个窗口
 ```
+
+`pnpm smoke` 的报告、截图和导出文件在 `.runtime/smoke/<平台>-<架构>/`，任一断言失败时退出码非零。`--native` 另外读系统层的前台应用和窗口层级（macOS 不需要额外权限；Windows 版探针还没在 Windows 上跑过）。`--app <可执行文件或 .app>` 测打包后的程序：发布包关掉了 `--inspect`，这时只连渲染进程，读不到主进程窗口状态的断言和导出回放记为跳过。
 
 只跑核心测试时可以设置 `ELECTRON_SKIP_BINARY_DOWNLOAD=1` 跳过 Electron 二进制下载，CI 就是这样做的。改了 `src/protocol.ts` 的 schema 后，用 `pnpm schema:export` 重新导出 `protocol/event.schema.json`。
 
@@ -64,8 +67,8 @@ with MonitorSender(host_name='my-host') as sender:
 
 | 平台 | 级别 | 已验证 | 未验证 |
 | --- | --- | --- | --- |
-| Windows 10/11 x64 | Tier 1（优先） | GitHub Actions `windows-latest`：`format:check`、`typecheck`、`test`、`build`，以及 Python 3.9 / 3.13 测试通过（记录 13） | 原生窗口的置顶、不抢焦点、拖动缩放、多显示器与混合 DPI；打包；Defender 扫描 |
-| macOS | Tier 2 | `macos-latest` 上同一组 CI 通过（记录 13） | 原生窗口行为；Spaces 与全屏应用之上是否可见；打包、签名与公证 |
+| Windows 10/11 x64 | Tier 1（优先） | GitHub Actions `windows-latest`：`format:check`、`typecheck`、`test`、`build`，以及 Python 3.9 / 3.13 测试通过（记录 13）。win32-x64 目录 zip 在 macOS 上打出并读回核对：fuses、版本资源、`asInvoker` 清单、asar 完整性、SHA-256（记录 18） | 在 Windows 上启动发布包（SmartScreen、无 UAC、fuses 与 asar 完整性是否生效）；原生窗口的置顶、不抢焦点、拖动缩放、多显示器与混合 DPI；在 Windows 主机上打包与签名；Defender 扫描 |
+| macOS | Tier 2 | `macos-latest` 上同一组 CI 通过（记录 13）。macOS 27 arm64 实机：脚本启动后前台应用不变、窗口未获得焦点；窗口层级 3（浮动层），在重叠的其他应用普通窗口之上，取消置顶后回到 0（记录 19）；`pnpm smoke` 37 项通过，可见延迟 p95 88 ms（记录 19）；darwin-arm64 发布包能启动并接收事件，`ELECTRON_RUN_AS_NODE`、`--inspect`、`NODE_OPTIONS` 不生效，改动 asar 后拒绝启动（记录 18） | 从 Finder 启动时是否抢前台；Spaces 与全屏应用之上是否可见；手动拖动缩放、多显示器；签名与公证 |
 | Linux X11 | Tier 2 | Ubuntu 24.04.4 虚拟机（XFCE / xfwm4）：窗口带 `_NET_WM_STATE_ABOVE`，启动后焦点仍在原窗口（记录 P1-01、P1-04）；四轮重启后紧凑尺寸偏差不超过 1px（记录 P1-04 更正）；`pnpm demo` 闭环（记录 11）；`ubuntu-latest` CI | 多显示器、混合 DPI；打包 |
 | Windows arm64 | Tier 2 | 无，CI 没有这个 runner | 全部 |
 | Linux Wayland | Tier 3（尽力而为） | 无 | 全部。多数合成器不允许应用置顶或自行定位窗口，窗口里会显示这条提示 |
@@ -97,9 +100,25 @@ CI 通过只说明构建、纯函数和 DOM 测试通过，不等于原生窗口
 
 ## 打包与发布
 
-<!-- 打包与发布：打包分支合并后，由集成负责人在这里补命令、产物和校验方法。 -->
+```bash
+pnpm package                                   # 默认 win32-x64
+pnpm package --platform darwin --arch arm64    # 也支持 win32-arm64、darwin-x64、linux-x64、linux-arm64
+pnpm package:verify [--platform p] [--arch a]  # 单独读回核对已打出的包
+```
 
-目前没有发布包。设计目标是解压即用、不装额外组件、对 Windows 杀毒软件友好：最终用户不需要安装 Node.js、Python、.NET、VC++ 运行库或 WebView2，也不需要管理员权限；运行时依赖只用纯 JavaScript 包（`tests/deps.test.ts` 会检查）；运行时不启动子进程、不联网、只监听 `127.0.0.1`。签名、版本信息、Electron fuses 和 Defender 扫描的要求见 prompt「原生兼容、免额外组件与杀毒软件友好」。
+产物在 `release/`（不进 git）：
+
+- `jev-monitor-bar-<platform>-<arch>/`：解压即用的目录。Windows 可执行文件固定叫 `jev-monitor-bar.exe`，macOS 为 `JEV Monitor Bar.app`。
+- `jev-monitor-bar-<版本>-<platform>-<arch>.zip`：上面这个目录的 zip。不做单文件便携版、自解压、UPX 或混淆。
+- `SHA256SUMS.txt`：`release/` 里现有 zip 的 SHA-256。正式发布前先清空 `release/`，免得混进旧版本。
+
+打包时只带 `dist/`（不含 source map）和最小的 `package.json`，不带 `node_modules`；渲染端用 React 生产构建。Electron fuses：关掉 RunAsNode、`NODE_OPTIONS`、`--inspect`，打开 asar 完整性校验与只从 asar 加载。`GrantFileProtocolExtraPrivileges` 暂时保持打开，因为渲染页是用 `file://` 从 asar 里加载的，关掉后窗口空白。Windows 版本资源由纯 JS 的 resedit 写入，macOS 上打 Windows 包不需要 wine。`pnpm package` 结束时会自动跑一遍 `package:verify`，检查 fuses、asar 内容（只有 8 项，没有 `.node`、`node_modules`、source map）、asar 头哈希、Windows 版本资源与清单、zip 与目录逐项一致、SHA-256。
+
+签名：只有在 Windows 主机上打 win32 包，并设置了 `WINDOWS_CERTIFICATE_FILE`（配 `WINDOWS_CERTIFICATE_PASSWORD`）、`WINDOWS_SIGN_WITH_PARAMS` 或 `WINDOWS_SIGN_HOOK_MODULE_PATH` 之一时才签名（SHA-256，`@electron/windows-sign`）。否则打印未签名提示。仓库里不放证书。签名流程还没有实际跑过。
+
+CI 的 `package-windows` 作业在 `windows-latest` 上打 win32-x64 包并核对，zip 和 `SHA256SUMS.txt` 作为 artifact 保留 14 天。这只证明包的结构正确，不等于在 Windows 上启动过或做过 Defender 扫描。
+
+设计目标是解压即用、不装额外组件、对 Windows 杀毒软件友好：最终用户不需要安装 Node.js、Python、.NET、VC++ 运行库或 WebView2，也不需要管理员权限；运行时依赖只用纯 JavaScript 包（`tests/deps.test.ts` 会检查）；运行时不启动子进程、不联网、只监听 `127.0.0.1`。签名、版本信息、Electron fuses 和 Defender 扫描的要求见 prompt「原生兼容、免额外组件与杀毒软件友好」。
 
 发布包在签名之前都是未签名的：Windows 会弹 SmartScreen 提示，macOS 的 Gatekeeper 会拦下未签名、未公证的应用。只从仓库所有者发布的位置下载，并核对随附的 SHA-256。
 
@@ -109,7 +128,7 @@ CI 通过只说明构建、纯函数和 DOM 测试通过，不等于原生窗口
 - 只显示宿主发来的事件。读不到模型的隐藏思考，不生成推理过程，也不补写理由；没有接入的宿主就没有数据。
 - 只在本机。接收端只监听 `127.0.0.1`，不联网，没有遥测和账号。
 - Linux Wayland 上多数合成器不允许应用置顶或自定位窗口，小窗可能被遮挡，位置也可能恢复不了。
-- Windows 与 macOS 的原生窗口行为未验证，没有发布包，没有 Defender 扫描记录。30 分钟负载、内存与可见延迟（审计 A9）还没测。
+- Windows 原生窗口行为未验证，Windows 发布包没有在 Windows 上启动过，没有 Defender 扫描记录。macOS 只验证了表里列出的几项。30 分钟负载与内存（审计 A9）还没测。
 - 去重只在内存窗口内，窗口外的旧事件重发可能被再次接受（C8）。跨 producer 的先后取决于发送端时钟（C11）。完全损坏的尾行不保留 cursor 高水位（C6）。详见 `docs/INTEGRATION.md` 第 6、7 节。
 - 导出和回放在主进程里同步读文件。
 - 许可证由仓库所有者决定，暂未授予开源许可证。

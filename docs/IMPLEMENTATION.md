@@ -13,7 +13,7 @@
 | M2 | Electron 主进程、平台模块、preload、Windows 置顶小窗 | 集成分支已有主进程、平台模块、preload 与窗口位置恢复（记录 08）。原生 Windows 窗口未验证 |
 | M3 | 紧凑/展开 UI、详情、时间线、断线提示、导出与回放 | 集成分支已有紧凑条、展开视图、导出与回放（记录 08） |
 | M4 | Python 发送器、示例宿主、`pnpm demo` | 集成分支已有 Python 发送器、示例宿主与 `pnpm demo`（记录 08） |
-| M5 | 接入文档、延迟与负载测试、Windows 实机验证与打包；macOS/Linux 适配 | 未开始 |
+| M5 | 接入文档、延迟与负载测试、Windows 实机验证与打包；macOS/Linux 适配 | 进行中：接入文档（记录 16）、目录 zip 打包与读回核对（记录 18）、桌面冒烟测试与 macOS 可见延迟（记录 19）已完成。30 分钟负载、Windows 实机验证、Defender 扫描未完成 |
 
 ## 记录模板
 
@@ -555,3 +555,96 @@
 - 内容：记录 12 的 push 启动了新的 ci。提交 `b6ce074` 上 push run `35829372457` 与 pull_request run `35829375092` 都成功。各 9 个作业都有 runner，并且步骤跑完：Windows、Ubuntu、macOS 的 core 通过 `pnpm format:check`、`pnpm typecheck`、`pnpm test`、`pnpm build`；同一三个系统上 Python 3.9 与 3.13 的 `python -m unittest discover -s python/tests -v` 通过。没有改产品代码。
 - 验证：以上作业的结论来自 GitHub Actions API，runner 名非空，对应步骤结论为 success。这次通过只表示 build、纯函数和 DOM。没有把 Windows 或 macOS 原生窗口、置顶、DPI、30 分钟负载、打包或 Defender 写成已验收。
 - 遗留：A9 的 30 分钟负载、Windows 原生置顶与 DPI、打包、Defender 仍留到 PR #14 合并之后。PR #14 在本条之后改为可审阅，不在这里合并进 main。
+
+## 14 — CI 去掉重复运行，仓库改为公开
+
+- 日期：2026-09-30
+- harness：claude-code
+- model：claude-opus
+- 提交：`011046e`、`05df30e`、`f834d64`（分支 `claude/m5-integration`，起点 `826c5a8`）
+- 内容：
+  - 仓库在记录 12 之后又变回私有。私有仓库的 Actions 分钟按 macOS 10 倍、Windows 2 倍计，原来每次推送功能分支会同时触发 push 与 pull_request，9 个作业跑两遍。改为 push 只在 main 上触发、PR 只走 pull_request，同一 ref 的新运行取消旧运行，保留 `workflow_dispatch`。Python 矩阵从 6 个作业减到 4 个：Linux 跑 3.9 与 3.13，Windows 与 macOS 只跑 3.9。
+  - 按仓库所有者要求，用 `gh repo edit --visibility public` 把仓库改为公开。改之前扫过全部分支的历史：没有提交过 `.env`、证书或私钥文件，`.env.example` 只有注释掉的占位；按常见 key、token、私钥格式检索全部 diff，没有命中。仓库仍没有许可证。
+  - 新增 `package-windows` 作业（记录 18）与 `smoke` 作业（记录 19）。
+  - `.gitignore` 加 `.claude/worktrees/`：Claude Code 的并行 agent 把 worktree 放在仓库里，prettier 会扫到它们。
+  - 里程碑表 M1 一行更正为 A1–A8 已修、闭环验收已做。
+- 验证：`gh repo view --json visibility` 为 `PUBLIC`。改过的 `ci.yml` 通过 `prettier --check`。这些作业在 Actions 上的结果以推送后的运行为准，本条不写成已通过。
+- 遗留：公开仓库没有许可证，别人可以看但无权复用，由仓库所有者决定。
+
+## 15 — A1/A4/A7 验收测试，并结论 c7f46d0
+
+- 日期：2026-09-30
+- harness：claude-code
+- model：claude-opus
+- 提交：`ee37fa4`（分支 `claude/m5-a1-a4-review`，起点 `826c5a8`），合并 `a352a23`
+- 内容：
+  - 按审计 A1、A4、A7 的验收逐条写 `tests/audit-acceptance.test.ts`（9 项）。测试走真实 `EventStore`、`page` IPC，并在 jsdom 里渲染 `ExpandedView` 与 `ReplayView`。在 `826c5a8` 上 3 项未通过，其余 6 项通过。
+  - A1：`action.completed` 后已有 verification 时，决策链仍写「已执行待验证 X → 验证：失败」，和 PROTOCOL.md「已执行待验证＝尚未验证」矛盾，demo 场景都会出现。改为有验证写「已执行 X」；没有终态却有验证时省略执行环节。`expanded-model` 测试里两处链文案随之更新。
+  - A4：快照只带最近 400 条，暂停时新增 600 条只显示「400 条新事件」。`TimelineTab` 新增 `eventCount`，展开视图和回放都传 `run.event_count`。
+  - A4：回到最新后，读历史时留下的旧行和最新快照之间缺一段，跟随的尾部静默跳过事件（实测 702…1800 中间缺 802–1400）。回到最新或滚回尾部时丢掉历史行，重置「没有更早的事件」判断，并丢弃在途的更早分页。
+  - A7：201 个 run 的回放焦点有效；选中的 run 被淘汰后仍可改选；退回到该 run 开始前再前进可恢复。未改代码。
+  - c7f46d0（`cursor/fix-expanded-a1-a4-83b9`）：同一组测试在它的导出上只过了 A1 验证文案和 A4 平稳刷新两项。一次快照带来 600 条时仍只数到 400；不区分超出保留窗口；基于 A7 修复之前的 `8e1eb65`。唯一独有的语义（有验证不写待验证）已移植，结论是被取代，可关闭。
+- 验证：macOS 27 arm64、Node 22.23.2、pnpm 11.19.0：`pnpm format:check`、`pnpm typecheck`、`pnpm test`（134 通过）、`pnpm build` 通过。视口不跳按「渲染行不变且 scrollTop 零写入」判断，未测像素位置。合并进 `claude/m5-integration` 后在同一台机器上重跑，134 项通过。
+- 遗留：实时模式下显式选中的 run 被淘汰后，展开视图显示「正在读取运行…」且选择器保留；回放则回落到其他 run。两者口径不同，未统一。回到最新后重新阅读历史需要重新分页。
+
+## 16 — 接入文档、协议补充与集成后的 README
+
+- 日期：2026-09-30
+- harness：claude-code
+- model：claude-opus
+- 提交：`a092cea`（分支 `claude/m5-docs`，起点 `826c5a8`），合并 `c18f976`
+- 内容：
+  - 新增 `docs/INTEGRATION.md`：会话文件、平台路径与 `JEV_MONITOR_HOME` / `JEV_MONITOR_SESSION`、`pnpm start` 用 `.runtime/dev`、只走 127.0.0.1、监视器离线与 token 轮换、会话文件权限；Python 发送器用法与失败隔离；一次决策闭环的事件顺序（Choice / Score / Noul、多问题、规则直接决策、规则与应用覆盖、重试、稳定 ID、验证）；不要发送的内容；直接发 HTTP 的请求格式与每个状态码的处理，Node 与 curl 示例；时钟与顺序（C11、C8）；残行 cursor（C6）；不接 TypeSafe 的试法。
+  - `docs/PROTOCOL.md` 文末追加「补充（2026-09-30）」：`Bearer ` 前缀实际可省、路径全等与 Content-Type 大小写、Node 的 408、`received_at` 不参与排序、残行 cursor 可能复用且没有 fsync、桌面端没有诊断开关。前文不改。
+  - `README.md` 改写现状、功能、安装运行、平台验证表（只按实施记录写）、数据目录与保留、会话文件权限、未签名说明、限制；「已核实的边界」原文保留。
+  - `docs/STATUS.md` 追加更正，指向本文件。
+- 验证：macOS 27 arm64，Node 22.23.2，Python 3.13.13 与 uv 的 3.9.6。临时 tsx 脚本（未提交）用 `EventStore` + `startServer` 起接收端，没有启动 Electron。从文档里抽出的代码原样运行：第 2 节示例两个版本各 10 条 sent；第 3 节片段两个版本各 22 条 sent，判断与尝试状态符合预期、anomalies 为 0；Node 示例三条 200；curl 覆盖 200、重复 200、409、两种 400、401、403、404、413（带与不带 Content-Length）、415，只读段文件得到 503，慢速正文约 10.7 秒得到 408。停掉接收端再以同一目录重启（新端口与 token）：`queue_size=5` 的发送器离线丢 19 条，恢复后先发 `telemetry.dropped` count=19，其余 34 条写入。脱敏用假值核对。`fake_host.py` 与 `pnpm demo:host --fast --once` 状态与预期一致。Windows、Linux 与 Electron 窗口未验证；PowerShell 那一行未执行。
+- 遗留：接收端接受不带 `Bearer ` 前缀的 token；桌面端没有诊断模式开关；请求超时实际约 10 秒才生效；`appendFileSync` 确认前不 fsync；`.prettierignore` 排除 `*.md`，格式检查不覆盖文档。
+
+## 17 — Python 发送器 close 超时后把未送达事件计入 dropped
+
+- 日期：2026-09-30
+- harness：claude-code
+- model：claude-opus
+- 提交：`4650f4a`
+- 内容：记录 16 核对文档时发现，`close(timeout)` 超时后队列里剩下的事件和正在投递的那一条会被直接丢掉，`stats()['dropped']` 不变。现在 `close` 停止线程后清空队列并计数，线程退出时未送达的 pending 也计一次。新增 `test_close_timeout_counts_unsent_events_as_dropped`。`docs/INTEGRATION.md` 相应更正，原来的观测结果保留并注明是修复前。
+- 验证：macOS arm64，uv 的 Python 3.9 与 3.13：`python -m unittest discover -s python/tests` 21 项通过。去掉修复后新测试失败（`2 != 5`），恢复后通过。
+- 遗留：不调用 `close` 就退出进程时，队列里的事件仍会丢掉且不计数（守护线程随进程结束）。
+
+## 18 — Windows 优先的目录 zip 打包与读回核对
+
+- 日期：2026-09-30
+- harness：claude-code
+- model：claude-opus
+- 提交：`cbf6b57`（分支 `claude/m5-package`，起点 `826c5a8`），合并 `9613c79`，CI 作业 `05df30e`
+- 内容：
+  - `pnpm package`（`scripts/package.mjs`），默认 win32-x64，`--platform/--arch` 支持 win32-arm64、darwin-arm64/x64、linux-x64/arm64。构建时设 `JEV_BUILD_MODE=production`（`scripts/build.mjs` 只对渲染端 define `NODE_ENV=production`，`pnpm build/start/demo` 不变）；app 目录只有 dist（去掉 source map）和最小 package.json，不带 node_modules；@electron/packager 开 asar，Electron zip 按 electron 包的 checksums.json 校验，临时目录在 `release/.stage`；输出 `release/jev-monitor-bar-<platform>-<arch>/`（0755）、`release/jev-monitor-bar-<ver>-<platform>-<arch>.zip`（yazl，顶层固定目录，保留权限位与符号链接，支持 SOURCE_DATE_EPOCH）和 `release/SHA256SUMS.txt`（coreutils 格式）。不做单文件便携版、自解压、UPX 或混淆。
+  - Windows 版本资源：CompanyName/FileDescription/ProductName「JEV Monitor Bar」、FileVersion 0.1.0.0、ProductVersion 0.1.0、InternalName jev-monitor-bar、OriginalFilename jev-monitor-bar.exe、LegalCopyright。packager 19.1.1 用 resedit（纯 JS，macOS 上不需要 wine）。不传 `requested-execution-level`：它把 `Buffer.from(str).buffer` 写进清单，1425 字节的清单后面多出约 6.7 KB 缓冲池垃圾（在 exe 副本上复现）。Electron 自带清单已是 asInvoker，由 verify 读回。
+  - Fuses（@electron/fuses，strictlyRequireAllFuses）：RunAsNode、EnableNodeOptionsEnvironmentVariable、EnableNodeCliInspectArguments 关；EnableEmbeddedAsarIntegrityValidation、OnlyLoadAppFromAsar 开；EnableCookieEncryption 关；GrantFileProtocolExtraPrivileges 保持开：关掉后渲染页 `app.asar/dist/renderer/index.html` 报 ERR_FILE_NOT_FOUND（macOS arm64 实测），要关它须先改自定义协议加载。macOS 主机上翻 fuses 后重做 ad-hoc 签名。
+  - 签名钩子：仅 Windows 主机 + win32 目标 + 设了 `WINDOWS_CERTIFICATE_FILE` / `WINDOWS_SIGN_WITH_PARAMS` / `WINDOWS_SIGN_HOOK_MODULE_PATH` 时调用 @electron/windows-sign（sha256）；否则打印未签名并提示用 SHA256SUMS 核对。仓库不含证书。
+  - `pnpm package:verify`（`scripts/verify-package.mjs`）：读回 fuse wire；asar 只含 package.json 与 dist 共 8 项，包内无 `.node`、node_modules、source map；bundle 只 require electron 与 Node 内置模块；asar 头哈希与 exe INTEGRITY 资源或 Info.plist 一致；exe 版本资源与清单（asInvoker、uiAccess=false、清单后无多余字节）；macOS 上 codesign --verify --deep --strict；zip 与目录逐项一致；SHA256SUMS 与重算一致。
+  - 新增 devDependencies（纯 JS）：@electron/fuses、@electron/asar、@electron/windows-sign、resedit、plist、yazl、yauzl。新增 `tests/package-config.test.ts`、`tests/release-zip.test.ts`，只测纯函数和小目录 zip 往返，不跑完整打包。
+  - CI 新增 `package-windows` 作业：在 `windows-latest` 上打包、核对并上传 zip 与 SHA256SUMS。
+- 验证（macOS 27 arm64，Node 22.23.2，pnpm 11.19.0，Electron 42.11.6）：`pnpm format:check`、`pnpm typecheck`、`pnpm test`（139 通过）、`pnpm build` 通过。`pnpm package` 与 `pnpm package:verify` 在 win32-x64、win32-arm64、darwin-arm64、linux-x64 上全部 ok；`shasum -a 256 -c SHA256SUMS.txt` 通过。把 exe 的 RunAsNode 翻回开启后 verify 报 FAIL，恢复后通过。启动 darwin-arm64 包（隔离的 JEV_MONITOR_HOME）：会话文件 0600，`/health` 200/401，POST 事件得到 `{"accepted":true,"cursor":1}` 并落盘，窗口在屏幕上（400×132，floating 层），渲染页显示该事件，SIGTERM 后退出码 0 并删掉会话文件；用 ditto 解压的 zip 副本同样可运行，codesign 校验通过。`ELECTRON_RUN_AS_NODE=1 … -e`、`--inspect=127.0.0.1:<port>`、`NODE_OPTIONS=--require` 在发布包上都不生效（开发版 Electron 对照组三项都生效）。改 asar 头或 main.cjs 一个字节后，应用拒绝启动。合并进 `claude/m5-integration` 后在本机重跑：148 项测试通过，`pnpm package`（win32-x64）核对全部 ok。
+- 遗留：Windows exe 未在 Windows 上运行（SmartScreen、无 UAC、fuses 与 asar 完整性、Defender 扫描、Windows 主机打包与签名均未验证）。Linux 包只构建与核对，未运行；chrome-sandbox 无法经 zip 保留 setuid。CompanyName、LegalCopyright 与 macOS bundle id（packager 默认 com.electron.jev-monitor-bar）待仓库所有者确认。发布包仍接受 `--remote-debugging-port`，没有对应的 fuse。GrantFileProtocolExtraPrivileges 须等渲染页改成自定义协议后才能关。
+
+## 19 — 桌面冒烟测试与可见延迟（pnpm smoke）
+
+- 日期：2026-09-30
+- harness：claude-code
+- model：claude-opus
+- 提交：`ae6777f`（分支 `claude/m5-desktop-smoke`，起点 `826c5a8`），合并 `bb0447c`，CI 作业 `f834d64`
+- 内容：
+  - 新增 `pnpm smoke`（`scripts/smoke.mjs`、`smoke-lib.mjs`、`smoke-native.mjs`）。用 Playwright 启动真实窗口，数据目录固定在 `.runtime/smoke/<platform>-<arch>/home`，报告、截图、日志、导出文件写在同一目录，任一断言失败退出码非零，有总超时。默认测 `pnpm build` 的产物；`--app` 测打包后的可执行文件或 `.app`。发布包关掉 `--inspect` 的 fuse 时改用 CDP，只连渲染进程，主进程窗口断言与导出回放记为跳过。
+  - 把记录 11 的人工闭环验收改成自动断言：7 个 fixture 场景经 `demo-host.mjs --once --fast` 用真实 HTTP 发送；紧凑条与展开视图是同一个 run；只选择不显示已执行或成功；完成未验证只显示「已执行待验证」；暂停跟随期间继续接收，视口不动；导出后回放，关键状态与实时一致；回放期间继续接收；退出回放能看到实时数据；输入摘要里的密码在界面和导出里都已脱敏。
+  - 窗口断言：置顶；启动后未获得焦点；在显示器工作区内；contextIsolation、sandbox 开，nodeIntegration 关；可缩放；紧凑宽度 360–440；紧凑与展开切换；置顶开关。
+  - 可见延迟：紧凑条模式下逐条 POST 带唯一标记的 `progress.updated`，页面里用 MutationObserver 加两个动画帧记可见时刻。报告 POST 开始到可见、接收到可见、POST 开始到 DOM 出现、POST 往返的 p50/p95/max，按最近秩法取百分位，缺一条即不通过。
+  - `--native`：macOS 用 NSWorkspace 与 CGWindowList 读前台应用和窗口层级，不需要系统权限；Windows 用 user32 读前台进程与是否置顶（未在 Windows 上运行过）。
+  - `tests/smoke-lib.test.ts` 11 项。`src/main/platform.ts` 只改两处 macOS 注释。
+  - CI 新增 `smoke` 作业：Windows 必须通过，Linux（xvfb）先 continue-on-error；Windows 上另跑一次 `--native`，只记录结果。
+- 验证：macOS 27.0（Darwin 27.0.0）arm64，Apple M2、8 GB，Node 22.23.2，Electron 42.11.6，Playwright 1.63.0。
+  - 分支上：`pnpm format:check`、`pnpm typecheck`、`pnpm test`（136 项）、`pnpm build` 通过。`pnpm smoke --native` 37/37 通过，N=200 时 POST 开始到可见 p50 80 ms、p95 88 ms、最大 134 ms，接收到可见 p95 86 ms。这次运行时会话已锁屏（前台为 loginwindow），不能当作画面已上屏的证据。会话活动时的 10–20 条短运行 p50 80–81 ms。
+  - 会话活动时 `--native` 验证了：启动后前台应用不变、窗口未获得焦点；窗口层级 3，在重叠的其他应用普通窗口之上；取消置顶后层级 0，再置顶回到 3。
+  - 合并进 `claude/m5-integration`（含记录 15 的 A1 文案修改）后在本机重跑：159 项测试通过；`pnpm smoke --native` 37/37 通过，p50 80 ms、p95 88 ms、最大 121 ms。再用 `pnpm package --platform darwin --arch arm64` 打出的正式发布包跑 `pnpm smoke --native --no-build --app "release/jev-monitor-bar-darwin-arm64/JEV Monitor Bar.app"`：自动识别 `--inspect` 已关、改用 CDP，25 项通过、0 失败、8 项跳过，p95 89 ms。
+  - 未跑 Windows 和 Linux。没有屏幕录制权限，未做整屏截图。
+- 遗留：Windows runner 上的冒烟测试与截图以 Actions 结果为准；Windows 探针第一次实跑；xvfb 下的焦点语义；经 Finder 启动是否抢前台；Spaces、全屏之上、拖动缩放、多显示器；展开模式时间线的延迟没有单独测。

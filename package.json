@@ -13,6 +13,7 @@
     "start": "node scripts/launch.mjs",
     "demo": "node scripts/launch.mjs --demo --fresh",
     "demo:host": "node scripts/demo-host.mjs",
+    "smoke": "node scripts/smoke.mjs",
     "schema:export": "tsx scripts/export-schema.ts"
   },
   "dependencies": {

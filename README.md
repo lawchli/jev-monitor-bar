@@ -1,32 +1,118 @@
 # JEV Monitor Bar
 
-全平台、Windows 优先的只读决策监视小窗。宿主发送摘要事件 → 本地鉴权接收 → 追加日志 → Electron/React 小窗。此仓库独立于 `jev_zzz`。
+全平台、Windows 优先的只读决策监视小窗。宿主（运行 TypeSafe/JEV 的任务程序）发送摘要事件 → 本机鉴权接收 → 追加日志 → Electron/React 小窗。窗口里分开显示模型判断、应用选择、执行和验证，不控制宿主。此仓库独立于 `jev_zzz`。
 
-> 状态：开发中，尚不可用。目前只有事件协议、接收服务、持久化、状态聚合与脱敏等核心模块及其测试；桌面小窗、UI、Python 发送器和演示尚未实现。进度见 [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md)，已知问题见 [`docs/AUDIT.md`](docs/AUDIT.md)。
+> 状态（2026-09-30）：可以从源码运行。紧凑条、展开视图、时间线、导出与回放、Python 发送器和 `pnpm demo` 已在同一份代码里，审计 A1–A8 的修复已接入（实施记录 09、10、A8、11），并在 Linux X11 虚拟机上走过一次 `pnpm demo` 闭环（记录 11）。还没有发布包。Windows 与 macOS 的原生窗口行为还没有实机验证，30 分钟负载和可见延迟也还没测。进度以 [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md) 为准，已知问题见 [`docs/AUDIT.md`](docs/AUDIT.md)。
+
+## 现在能做什么
+
+- 紧凑条（默认 400×132，默认置顶，显示时不抢焦点）：任务名、「模拟数据」标记、连接状态（在线 / N 秒无新事件 / 可能断开 · 最后更新）、阶段 · 进度 · 运行时长、最新选择 → 实际动作（来源是模型、规则还是应用，是否覆盖）· 执行状态、最近事件。有多个运行时可以切换。按钮有「置顶」「展开」。
+- 展开视图（默认 440×640），三个页签：
+  - 决策：Choice、Score、Noul 各按自己的语义显示。请求没完成时概率写「未知」。confidence 写明「不是正确率」。说明只显示调用方提供的内容和来源，没有就写「未提供」。决策链把模型、规则或应用覆盖、执行、验证分开，例如「JEV 选择 A → 规则覆盖为 B（规则 X · 来源 Y） → 执行中 B」；只有选择时写「应用选择/待执行」。规则直接定下的动作标「规则决策」。
+  - 执行：按动作分组显示每次尝试和验证检查项。验证计数写明分母，失败和未知单独列出，没验证的完成不算成功。
+  - 时间线：默认跟随最新；向上滚动后暂停跟随，后台照常接收；一键回到最新；「仅错误与重试」筛选；发生时间与接收时间相差超过 5 秒标「迟到」；「加载更早」分页；点开一条事件看脱敏后的 JSON 纯文本。
+- 导出与回放：导出为逐行校验、脱敏的 JSONL，跳过的损坏行会计数。回放打开 `.jsonl`（不超过 50 MiB，最多 20000 条），可以逐条、1× 或 10× 播放，不影响实时接收。
+- 接收端：只监听 `127.0.0.1`，token 鉴权，单条事件上限 64 KiB，按 `event_id` 去重，序号冲突返回 409，写盘后才确认，重启后恢复。
+- Python 发送器：Python 3.9+，只用标准库。有界队列、短超时、丢弃计数，不阻塞宿主。
+- 窗口：两种模式各自记住位置和尺寸；显示器被移除时移回可见区域。
+- `pnpm demo`：不需要 TypeSafe key，通过同一个 HTTP 接口播放 7 个标明「模拟」的场景。
+
+## 安装与运行
+
+需要 Node.js 22+ 和 pnpm 11（`package.json` 的 `packageManager` 为 `pnpm@11.19.0`，可以用 corepack 启用）。Python 发送器另需 Python 3.9+。
+
+```bash
+pnpm install   # 会下载 Electron 二进制
+pnpm demo      # 构建并启动，循环播放 7 个模拟场景；数据在 .runtime/demo，启动前清空
+pnpm start     # 构建并启动，等待真实宿主；数据在 .runtime/dev，或 JEV_MONITOR_HOME 指定的目录
+```
+
+`pnpm demo` 的 7 个场景是正常完成、概率分散、规则覆盖、失败后重试、验证失败、断线恢复、并发决策。关掉窗口就结束。
+
+检查：
+
+```bash
+pnpm format:check
+pnpm typecheck
+pnpm test
+pnpm build
+python -m unittest discover -s python/tests -v
+```
+
+只跑核心测试时可以设置 `ELECTRON_SKIP_BINARY_DOWNLOAD=1` 跳过 Electron 二进制下载，CI 就是这样做的。改了 `src/protocol.ts` 的 schema 后，用 `pnpm schema:export` 重新导出 `protocol/event.schema.json`。
+
+## 接入宿主
+
+宿主通过数据目录里的会话文件找到监视器，再把事件 POST 到本机接收端。Python 宿主最少这样：
+
+```python
+from jev_monitor import MonitorSender
+
+with MonitorSender(host_name='my-host') as sender:
+    sender.run_started('模拟：示例任务', simulated=True)  # 真实任务去掉 simulated
+    sender.progress(phase='执行', completed=1, total=1)
+    sender.run_completed()
+```
+
+- [`docs/INTEGRATION.md`](docs/INTEGRATION.md)：接入指南。会话文件与 token、Python 发送器、一次决策闭环的事件顺序、不要发送的内容、其他语言直接发 HTTP、时间与顺序的限制、不接 TypeSafe 怎么试。
+- [`docs/PROTOCOL.md`](docs/PROTOCOL.md)：事件协议 v1 的完整规则。JSON Schema 在 [`protocol/event.schema.json`](protocol/event.schema.json)。
+- [`python/README.md`](python/README.md)：Python 发送器的参数和测试。
+
+从源码运行时，`pnpm start` 默认用仓库里的 `.runtime/dev`，不是下面的平台默认目录。宿主要设同一个 `JEV_MONITOR_HOME`（用绝对路径）。
 
 ## 平台支持
 
-| 平台 | 级别 | 现状 |
+| 平台 | 级别 | 已验证 | 未验证 |
+| --- | --- | --- | --- |
+| Windows 10/11 x64 | Tier 1（优先） | GitHub Actions `windows-latest`：`format:check`、`typecheck`、`test`、`build`，以及 Python 3.9 / 3.13 测试通过（记录 13） | 原生窗口的置顶、不抢焦点、拖动缩放、多显示器与混合 DPI；打包；Defender 扫描 |
+| macOS | Tier 2 | `macos-latest` 上同一组 CI 通过（记录 13） | 原生窗口行为；Spaces 与全屏应用之上是否可见；打包、签名与公证 |
+| Linux X11 | Tier 2 | Ubuntu 24.04.4 虚拟机（XFCE / xfwm4）：窗口带 `_NET_WM_STATE_ABOVE`，启动后焦点仍在原窗口（记录 P1-01、P1-04）；四轮重启后紧凑尺寸偏差不超过 1px（记录 P1-04 更正）；`pnpm demo` 闭环（记录 11）；`ubuntu-latest` CI | 多显示器、混合 DPI；打包 |
+| Windows arm64 | Tier 2 | 无，CI 没有这个 runner | 全部 |
+| Linux Wayland | Tier 3（尽力而为） | 无 | 全部。多数合成器不允许应用置顶或自行定位窗口，窗口里会显示这条提示 |
+
+CI 通过只说明构建、纯函数和 DOM 测试通过，不等于原生窗口行为已验证。平台约束见 [`JEV_MONITOR_AGENT_PROMPT.md`](JEV_MONITOR_AGENT_PROMPT.md)「平台支持策略」。
+
+## 数据目录与保留
+
+默认数据目录：
+
+- Windows：`%LOCALAPPDATA%\jev-monitor-bar\`
+- macOS：`~/Library/Application Support/jev-monitor-bar/`
+- Linux：`${XDG_STATE_HOME}/jev-monitor-bar/`（`XDG_STATE_HOME` 须为非空绝对路径），否则 `~/.local/state/jev-monitor-bar/`
+
+`JEV_MONITOR_HOME` 覆盖整个目录，`JEV_MONITOR_SESSION` 单独覆盖会话文件。Windows 与 macOS 的默认目录还没有在对应系统上实机验收。
+
+| 内容 | 位置 | 上限 |
 | --- | --- | --- |
-| Windows 10/11 x64 | Tier 1（优先） | 核心模块在 CI 测试；桌面窗口未实现 |
-| macOS、Linux X11、Windows arm64 | Tier 2（后续适配） | 核心模块在 CI 测试；桌面窗口未实现 |
-| Linux Wayland | Tier 3（尽力而为） | 多数合成器不允许应用置顶或自定位窗口 |
+| 事件 | `events/events-NNNNNNNN.jsonl` | 每段不超过 4 MiB，只留最近 8 段（约 32 MiB）。每次启动新开一段，所以频繁重启会更快挤掉旧段 |
+| 会话 | `session.json` | 每次启动重写，正常退出时删除 |
+| 窗口状态 | `window-state.json` | 当前模式、置顶开关、两种模式各自的位置与尺寸、所在显示器与缩放 |
+| Electron 配置 | `electron-profile/` | Electron 自己的缓存与配置 |
 
-平台约束与目录约定见 [`JEV_MONITOR_AGENT_PROMPT.md`](JEV_MONITOR_AGENT_PROMPT.md)「平台支持策略」。
+内存里只留最近 20000 条事件，并且序列化后不超过 32 MiB；去重也只在这个窗口里。最多保留 200 个运行，先淘汰已结束的。每个运行最多 500 个判断和 500 次尝试，超出时删掉最早的。时间线最多渲染 500 行，更早的用「加载更早」翻。
 
-设计目标是解压即用、不装额外组件、对 Windows 杀毒软件友好：最终用户不需要安装 Node.js、Python、.NET、VC++ 运行库或 WebView2，也不需要管理员权限；运行时依赖只用纯 JavaScript 包（`tests/deps.test.ts` 会检查）；运行时不启动子进程、不联网、只监听 `127.0.0.1`。发布包签名、版本信息、Electron fuses 和 Defender 扫描要求见 prompt「原生兼容、免额外组件与杀毒软件友好」。以上尚未有发布包可验证。
+会话文件里有 token。POSIX 上以 0600 写入临时文件再改名覆盖，之后再 `chmod` 0600，已有文件也会被改回 0600。Windows 上 `mode` 不起作用，依赖用户目录（`%LOCALAPPDATA%`）本身的 ACL。
 
-## 开发
+要清空数据，先关掉监视器，再删除数据目录。从源码运行的数据在 `.runtime/dev` 和 `.runtime/demo`，这两个目录不进 git。
 
-需要 Node.js 22+ 与 pnpm 11（版本见 `package.json` 的 `packageManager`）。
+## 打包与发布
 
-```bash
-pnpm install
-pnpm typecheck
-pnpm test
-```
+<!-- 打包与发布：打包分支合并后，由集成负责人在这里补命令、产物和校验方法。 -->
 
-只跑核心测试时可设置 `ELECTRON_SKIP_BINARY_DOWNLOAD=1` 跳过 Electron 二进制下载。
+目前没有发布包。设计目标是解压即用、不装额外组件、对 Windows 杀毒软件友好：最终用户不需要安装 Node.js、Python、.NET、VC++ 运行库或 WebView2，也不需要管理员权限；运行时依赖只用纯 JavaScript 包（`tests/deps.test.ts` 会检查）；运行时不启动子进程、不联网、只监听 `127.0.0.1`。签名、版本信息、Electron fuses 和 Defender 扫描的要求见 prompt「原生兼容、免额外组件与杀毒软件友好」。
+
+发布包在签名之前都是未签名的：Windows 会弹 SmartScreen 提示，macOS 的 Gatekeeper 会拦下未签名、未公证的应用。只从仓库所有者发布的位置下载，并核对随附的 SHA-256。
+
+## 限制
+
+- 只读。不控制宿主，不暂停任务，不批准或纠正动作。
+- 只显示宿主发来的事件。读不到模型的隐藏思考，不生成推理过程，也不补写理由；没有接入的宿主就没有数据。
+- 只在本机。接收端只监听 `127.0.0.1`，不联网，没有遥测和账号。
+- Linux Wayland 上多数合成器不允许应用置顶或自定位窗口，小窗可能被遮挡，位置也可能恢复不了。
+- Windows 与 macOS 的原生窗口行为未验证，没有发布包，没有 Defender 扫描记录。30 分钟负载、内存与可见延迟（审计 A9）还没测。
+- 去重只在内存窗口内，窗口外的旧事件重发可能被再次接受（C8）。跨 producer 的先后取决于发送端时钟（C11）。完全损坏的尾行不保留 cursor 高水位（C6）。详见 `docs/INTEGRATION.md` 第 6、7 节。
+- 导出和回放在主进程里同步读文件。
+- 许可证由仓库所有者决定，暂未授予开源许可证。
 
 ## 已核实的边界（2026-09-23）
 

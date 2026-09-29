@@ -68,6 +68,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm package
       - run: pnpm package:verify
+      # 启动发布包，确认 ELECTRON_RUN_AS_NODE、NODE_OPTIONS、--inspect 不生效，改动 app.asar 后拒绝启动。
+      - run: pnpm package:runtime
       # 在 Windows 上实际启动发布包。发布包关掉了 --inspect，冒烟测试自动改用 CDP，
       # 主进程窗口断言与导出回放记为跳过，系统层置顶与前台由 --native 探针检查。
       - run: pnpm smoke --no-build --native --app release/jev-monitor-bar-win32-x64/jev-monitor-bar.exe

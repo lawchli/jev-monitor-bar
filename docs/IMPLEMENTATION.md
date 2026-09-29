@@ -677,3 +677,20 @@
   - `docs/PROTOCOL.md` 追加「更正（2026-09-30，接收端修复后）」，`docs/INTEGRATION.md` 的状态码表与发送端说明随之更正，原来的观测结果保留并注明是修复前。
 - 验证：macOS arm64：去掉修复时两个测试失败（408 在 30007 ms 后才到；不带前缀得到 200），恢复后通过。`pnpm format:check`、`pnpm typecheck`、`pnpm test`（160 项）通过；Python 3.9、3.13 的 unittest 通过。
 - 遗留：桌面端仍没有诊断模式开关，`diagnostic` 入库时总被删掉（安全的一侧）；`appendFileSync` 确认前不 fsync，断电可能丢掉已确认的尾行。
+
+## 22 — 在运行时核对发布包的 fuses 与 asar 完整性（pnpm package:runtime）
+
+- 日期：2026-09-30
+- harness：claude-code
+- model：claude-opus
+- 提交：本条所在提交
+- 内容：
+  - 记录 20 之后的 CI 运行 [36632136736](https://github.com/lawchli/jev-monitor-bar/actions/runs/36632136736) 在 Windows Server 2025 runner 上第一次启动打出的 `jev-monitor-bar.exe`：`pnpm smoke --native --app …` 自动识别 `--inspect` 已关、改用 CDP，22 项通过、0 失败、9 项跳过，可见延迟 p95 89 ms，`native.foregroundNotTaken` 通过。`native.onTop` 跳过：CDP 模式下拿不到原生窗口句柄。
+  - smoke 判断「发布包关了 `--inspect`」是读可执行文件里的 fuse，不是看运行时是否生效。新增 `pnpm package:runtime`（`scripts/verify-runtime.mjs`），在同平台主机上实际启动 `release/` 里的包，各用独立的 `JEV_MONITOR_HOME`：
+    - `ELECTRON_RUN_AS_NODE=1` 加 `-e` 写标记文件：标记没有出现，应用照常启动并写出会话文件。
+    - `NODE_OPTIONS=--require <脚本>`：脚本没有执行，应用照常启动。
+    - `--inspect=127.0.0.1:<空闲端口>`：应用启动后该端口连不上，输出里没有「Debugger listening」。
+    - 复制一份包，把 `app.asar` 里 `dist/main.cjs` 中间的一个字节改掉再启动：进程退出，会话文件没有出现。
+  - CI 的 `package-windows` 作业在 `package:verify` 之后跑 `pnpm package:runtime`。
+- 验证：macOS 27 arm64，darwin-arm64 发布包：4 项全部通过，篡改的包退出码 1，整轮约 3.7 秒。开发版 Electron 上这三种入口都生效，是记录 18 的对照组，本条没有重复。Windows 上的结果以推送后的 CI 为准。
+- 遗留：CDP 模式下的 `native.onTop` 可以改为按进程号找窗口，还没做；Windows 10/11 桌面、Defender 扫描、干净机器解压即用仍要在 Windows 实机上做。

@@ -12,6 +12,7 @@
     "build": "node scripts/build.mjs",
     "package": "node scripts/package.mjs",
     "package:verify": "node scripts/verify-package.mjs",
+    "package:runtime": "node scripts/verify-runtime.mjs",
     "start": "node scripts/launch.mjs",
     "demo": "node scripts/launch.mjs --demo --fresh",
     "demo:host": "node scripts/demo-host.mjs",

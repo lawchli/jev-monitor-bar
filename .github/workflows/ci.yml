@@ -54,7 +54,7 @@ jobs:
 
   package-windows:
     # 打出未签名的 win32-x64 目录 zip 并读回核对（fuses、版本资源、asInvoker 清单、asar 完整性、SHA-256）。
-    # 这只证明包的结构正确，不等于在 Windows 上实际启动或 Defender 扫描过。
+    # 之后在 runner 上启动发布包跑冒烟测试。runner 是 Windows Server，不等于 Windows 10/11 桌面实机验收，也没有 Defender 扫描。
     runs-on: windows-latest
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: '1' # packager 自己下载并校验 Electron zip
@@ -68,6 +68,18 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm package
       - run: pnpm package:verify
+      # 在 Windows 上实际启动发布包。发布包关掉了 --inspect，冒烟测试自动改用 CDP，
+      # 主进程窗口断言与导出回放记为跳过，系统层置顶与前台由 --native 探针检查。
+      - run: pnpm smoke --no-build --native --app release/jev-monitor-bar-win32-x64/jev-monitor-bar.exe
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-win32-x64-package
+          path: |
+            .runtime/smoke/**
+            !.runtime/smoke/*/home/electron-profile/**
+          if-no-files-found: warn
+          retention-days: 14
       - uses: actions/upload-artifact@v4
         with:
           name: jev-monitor-bar-win32-x64

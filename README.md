@@ -67,7 +67,7 @@ with MonitorSender(host_name='my-host') as sender:
 
 | 平台 | 级别 | 已验证 | 未验证 |
 | --- | --- | --- | --- |
-| Windows 10/11 x64 | Tier 1（优先） | GitHub Actions `windows-latest`：`format:check`、`typecheck`、`test`、`build`，以及 Python 3.9 / 3.13 测试通过（记录 13）。win32-x64 目录 zip 在 macOS 上打出并读回核对：fuses、版本资源、`asInvoker` 清单、asar 完整性、SHA-256（记录 18） | 在 Windows 上启动发布包（SmartScreen、无 UAC、fuses 与 asar 完整性是否生效）；原生窗口的置顶、不抢焦点、拖动缩放、多显示器与混合 DPI；在 Windows 主机上打包与签名；Defender 扫描 |
+| Windows 10/11 x64 | Tier 1（优先） | GitHub Actions `windows-latest`：`format:check`、`typecheck`、`test`、`build`，以及 Python 3.9 / 3.13 测试通过（记录 13）。win32-x64 目录 zip 在 macOS 与 Windows runner 上打出并读回核对：fuses、版本资源、`asInvoker` 清单、asar 完整性、SHA-256（记录 18、20）。Windows Server 2025 runner 上 `pnpm smoke` 32 项通过，可见延迟 p95 87 ms；系统层探针确认窗口置顶、启动后不抢前台（记录 20） | Windows 10/11 桌面实机；在 Windows 上启动发布包（SmartScreen、无 UAC、fuses 与 asar 完整性是否生效）；拖动缩放、多显示器与混合 DPI；在 Windows 主机上打包与签名；Defender 扫描 |
 | macOS | Tier 2 | `macos-latest` 上同一组 CI 通过（记录 13）。macOS 27 arm64 实机：脚本启动后前台应用不变、窗口未获得焦点；窗口层级 3（浮动层），在重叠的其他应用普通窗口之上，取消置顶后回到 0（记录 19）；`pnpm smoke` 37 项通过，可见延迟 p95 88 ms（记录 19）；darwin-arm64 发布包能启动并接收事件，`ELECTRON_RUN_AS_NODE`、`--inspect`、`NODE_OPTIONS` 不生效，改动 asar 后拒绝启动（记录 18） | 从 Finder 启动时是否抢前台；Spaces 与全屏应用之上是否可见；手动拖动缩放、多显示器；签名与公证 |
 | Linux X11 | Tier 2 | Ubuntu 24.04.4 虚拟机（XFCE / xfwm4）：窗口带 `_NET_WM_STATE_ABOVE`，启动后焦点仍在原窗口（记录 P1-01、P1-04）；四轮重启后紧凑尺寸偏差不超过 1px（记录 P1-04 更正）；`pnpm demo` 闭环（记录 11）；`ubuntu-latest` CI | 多显示器、混合 DPI；打包 |
 | Windows arm64 | Tier 2 | 无，CI 没有这个 runner | 全部 |

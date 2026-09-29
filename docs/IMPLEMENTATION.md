@@ -648,3 +648,18 @@
   - 合并进 `claude/m5-integration`（含记录 15 的 A1 文案修改）后在本机重跑：159 项测试通过；`pnpm smoke --native` 37/37 通过，p50 80 ms、p95 88 ms、最大 121 ms。再用 `pnpm package --platform darwin --arch arm64` 打出的正式发布包跑 `pnpm smoke --native --no-build --app "release/jev-monitor-bar-darwin-arm64/JEV Monitor Bar.app"`：自动识别 `--inspect` 已关、改用 CDP，25 项通过、0 失败、8 项跳过，p95 89 ms。
   - 未跑 Windows 和 Linux。没有屏幕录制权限，未做整屏截图。
 - 遗留：Windows runner 上的冒烟测试与截图以 Actions 结果为准；Windows 探针第一次实跑；xvfb 下的焦点语义；经 Finder 启动是否抢前台；Spaces、全屏之上、拖动缩放、多显示器；展开模式时间线的延迟没有单独测。
+
+## 20 — M5 集成分支第一次 CI：Windows runner 上的冒烟测试与系统层探针
+
+- 日期：2026-09-30
+- harness：claude-code
+- model：claude-opus
+- 提交：`0cbeead` 的 CI 结果，以及本条所在提交
+- 内容：
+  - PR #15 在 `0cbeead` 上的 pull_request 运行 [36631651279](https://github.com/lawchli/jev-monitor-bar/actions/runs/36631651279) 10 个作业全部成功：core 三平台、python 4 个、`package-windows`、`smoke` 两个。
+  - `smoke (windows-latest)`（runner 镜像 `windows-2025-vs2026`，Microsoft Windows Server 2025）：`pnpm smoke --no-build` 32 项通过、0 失败，可见延迟 N=200，p50 78 ms、p95 87 ms、最大 133 ms。随后 `--native` 一轮 36 项通过、1 项跳过：Windows 系统层探针第一次实跑，`native.foregroundNotTaken`、`native.windowFound`、`native.onTop` 通过；`native.aboveOtherAppWindow` 跳过，因为 runner 上没有与它重叠的其他应用窗口。该轮可见延迟 p95 89 ms。
+  - `smoke (ubuntu-latest)`（xvfb，没有窗口管理器）：32 项通过、0 失败，p95 83 ms。这个作业仍按记录 19 设为不阻塞，等再跑几次稳定后再改为必须通过。
+  - `package-windows` 在 Windows 主机上第一次打包：`pnpm package` 与 `pnpm package:verify` 通过。
+  - 本条在 `package-windows` 作业里加一步：用 `pnpm smoke --no-build --native --app release/jev-monitor-bar-win32-x64/jev-monitor-bar.exe` 在 runner 上启动发布包。结果以推送后的运行为准。
+- 验证：结论来自 GitHub Actions 的作业日志（`gh run view --log`）。这些是 Windows Server runner 上的窗口，不是 Windows 10/11 桌面；没有多显示器与混合 DPI，没有手动拖动缩放，也没有 Defender 扫描。冒烟测试用的是开发构建，不是发布包（发布包的那一步是本条新加的）。
+- 遗留：Windows 10/11 实机验收（发布包启动、SmartScreen、无 UAC、置顶与混合 DPI、Defender、干净机器解压即用）。

@@ -395,6 +395,21 @@ class SenderTest(unittest.TestCase):
         self.assertEqual([event['payload']['completed'] for event in events], list(range(6)))
         self.assertEqual([event['sequence'] for event in events], list(range(1, 7)))
 
+    def test_close_timeout_counts_unsent_events_as_dropped(self):
+        missing = os.path.join(self.tmp, 'missing', 'session.json')
+        self.sender = MonitorSender(session_file=missing, queue_size=3, heartbeat_interval=60, timeout=0.2)
+        results = [self.sender.emit('progress.updated', {'completed': index}) for index in range(5)]
+        self.assertEqual(results, [True, True, True, False, False])
+        self.assertEqual(self.sender.stats()['dropped'], 2)
+        thread = self.sender._thread
+        self.sender.close(timeout=0.3)
+        self.assertTrue(wait_until(lambda: not thread.is_alive(), timeout=2))
+        # Every emitted event is either sent or dropped; none disappears silently.
+        stats = self.sender.stats()
+        self.assertEqual(stats['sent'], 0)
+        self.assertEqual(stats['dropped'], 5)
+        self.sender = None
+
     def test_bad_payload_does_not_stop_the_sender(self):
         server = self._start_server()
         self.sender = MonitorSender(session_file=self.session_path, heartbeat_interval=60)

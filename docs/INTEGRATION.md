@@ -182,7 +182,7 @@ with MonitorSender(host_name='my-host') as sender:
 - 投递在一个守护线程里做，这个线程不会阻止宿主进程退出。只有调用 `close` 时才等，最多等 `timeout` 秒。
 - `telemetry.dropped` 在恢复连接后先于积压事件发送。它的 `sequence` 在生成时才占用，可能比积压事件的大，接收端照常接受。
 - 心跳：距上次成功发送超过 `heartbeat_interval` 就发一条 `heartbeat`。界面按 run 最后一次接收的时间显示连接：10 秒内为「在线」，30 秒内为「N 秒无新事件」，更久为「可能断开 · 最后更新 …」。
-- `close(timeout)` 超时后仍在队列里的事件直接丢掉，不计入 `stats()['dropped']`，也不会补报。不调用 `close` 就退出进程时，队列里的事件同样丢掉。
+- `close(timeout)` 超时后仍在队列里的事件，以及正在投递但没送达的那一条，直接丢掉并计入 `stats()['dropped']`，不会再补报给接收端。不调用 `close` 就退出进程时，队列里的事件同样丢掉，也不计数。
 - 还有的限制：队列只限条数和单条 64 KiB，没有总字节上限（默认 1000 条，最坏约 64 MiB）。丢弃时在调用线程写 `logging.getLogger('jev_monitor')` 警告，慢的日志 handler 会拖慢 `emit`。
 
 ## 3. 一次决策闭环发哪些事件
@@ -519,7 +519,7 @@ pnpm demo:host --home <数据目录的绝对路径> --fast --once
 - 第 5 节的 Node 示例：三条都是 200 `accepted:true`。curl 覆盖了表里的 200（新事件与重复）、409、两种 400、401、403、404、413（带与不带 `Content-Length`）、415。把当前段文件设为只读得到 503，恢复后同一个 `event_id` 被接受。正文发一半不再发，约 10.7 秒后得到 408。不带 `Bearer ` 前缀的 token 通过了健康检查；小写 `bearer` 得到 401。
 - 停掉接收端，再用同一目录重启（新端口、新 token）：发送器（`queue_size=5`）离线期间丢了 19 条，恢复后先发 `telemetry.dropped` `count=19`，其余 34 条全部写入，run 的 `dropped` 为 19。
 - 第 4 节的脱敏（全用假值）：候选名 `password` 和 `sk-…` 原样保留，值被替换；`ghp_…` 没有被替换；`diagnostic` 被删掉。
-- 没有接收端时：`queue_size=3` 下 5 次调用返回 True、True、True、False、False，共约 0.3 ms；`close(timeout=0.3)` 用了约 310 ms，之后 `dropped` 仍为 2。
+- 没有接收端时：`queue_size=3` 下 5 次调用返回 True、True、True、False、False，共约 0.3 ms；`close(timeout=0.3)` 用了约 310 ms，之后 `dropped` 仍为 2。这是修复前的结果：之后 `close` 改为把队列里剩下的 3 条计入 `dropped`，同样条件下为 5（`test_close_timeout_counts_unsent_events_as_dropped`）。
 - `python/examples/fake_host.py` 与 `pnpm demo:host --fast --once` 对同一个接收端：4 个与 7 个模拟运行的最终状态与预期一致。
 
 没有在 Windows 或 Linux 上跑这些示例，也没有经过 Electron 窗口。

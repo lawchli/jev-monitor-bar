@@ -7,6 +7,8 @@ const dist = path.join(root, 'dist');
 fs.rmSync(dist, {recursive: true, force: true});
 
 const shared = {bundle: true, sourcemap: true};
+// 发布包（scripts/package.mjs）设 JEV_BUILD_MODE=production，渲染端用 React 生产构建。pnpm start / demo 不变。
+const production = process.env.JEV_BUILD_MODE === 'production';
 
 await esbuild.build({
   ...shared,
@@ -36,6 +38,7 @@ await esbuild.build({
   format: 'iife',
   target: 'chrome130',
   jsx: 'automatic',
+  ...(production ? {define: {'process.env.NODE_ENV': '"production"'}} : {}),
 });
 
 fs.copyFileSync(path.join(root, 'src/renderer/index.html'), path.join(dist, 'renderer/index.html'));

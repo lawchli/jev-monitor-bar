@@ -75,3 +75,52 @@ jobs:
             release/jev-monitor-bar-*-win32-x64.zip
             release/SHA256SUMS.txt
           retention-days: 14
+
+  smoke:
+    # 用 Playwright 驱动真实 Electron 窗口：闭环验收、窗口断言、可见延迟 p95，截图作为 artifact 上传。
+    # Linux 在 xvfb 下没有窗口管理器，焦点相关断言可能不成立，先不阻塞。
+    # 每次 pnpm smoke 会清空自己的输出目录，所以每跑一次就先上传一次。
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.os == 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: node node_modules/electron/install.js
+      - run: pnpm build
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+      - if: runner.os == 'Windows'
+        run: pnpm smoke --no-build
+      - if: runner.os == 'Linux'
+        run: xvfb-run -a --server-args="-screen 0 1920x1080x24" pnpm smoke --no-build
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-${{ matrix.os }}
+          path: |
+            .runtime/smoke/**
+            !.runtime/smoke/*/home/electron-profile/**
+          if-no-files-found: warn
+          retention-days: 14
+      - if: runner.os == 'Windows'
+        # Windows 系统层探针（前台进程、是否置顶）还没在 Windows 上跑过，先只记录结果。
+        continue-on-error: true
+        run: pnpm smoke --no-build --native
+      - uses: actions/upload-artifact@v4
+        if: always() && runner.os == 'Windows'
+        with:
+          name: smoke-${{ matrix.os }}-native
+          path: |
+            .runtime/smoke/**
+            !.runtime/smoke/*/home/electron-profile/**
+          if-no-files-found: warn
+          retention-days: 14

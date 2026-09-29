@@ -1,0 +1,39 @@
+name: loadtest
+
+# 只手动触发：默认 30 分钟、每个平台一个作业。报告作为 artifact 上传，不作为合并门槛。
+on:
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: 负载时长，例如 30m、5m
+        default: '30m'
+      runtime:
+        description: 接收端运行时（node，或 electron 以 Electron 自带的 Node 运行）
+        default: 'node'
+
+jobs:
+  loadtest:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - if: inputs.runtime == 'electron'
+        run: node node_modules/electron/install.js
+      - run: pnpm loadtest --duration ${{ inputs.duration }} --runtime ${{ inputs.runtime }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: loadtest-${{ matrix.os }}
+          path: .runtime/loadtest/*/report.*
+          if-no-files-found: warn
+          retention-days: 30

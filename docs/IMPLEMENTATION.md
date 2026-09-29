@@ -13,7 +13,7 @@
 | M2 | Electron 主进程、平台模块、preload、Windows 置顶小窗 | 集成分支已有主进程、平台模块、preload 与窗口位置恢复（记录 08）。原生 Windows 窗口未验证 |
 | M3 | 紧凑/展开 UI、详情、时间线、断线提示、导出与回放 | 集成分支已有紧凑条、展开视图、导出与回放（记录 08） |
 | M4 | Python 发送器、示例宿主、`pnpm demo` | 集成分支已有 Python 发送器、示例宿主与 `pnpm demo`（记录 08） |
-| M5 | 接入文档、延迟与负载测试、Windows 实机验证与打包；macOS/Linux 适配 | 进行中：接入文档（记录 16）、目录 zip 打包与读回核对（记录 18）、桌面冒烟测试与 macOS 可见延迟（记录 19）已完成。30 分钟负载、Windows 实机验证、Defender 扫描未完成 |
+| M5 | 接入文档、延迟与负载测试、Windows 实机验证与打包；macOS/Linux 适配 | 进行中：接入文档（记录 16）、目录 zip 打包与读回核对（记录 18、22）、桌面冒烟测试与可见延迟（macOS 与 Windows Server runner，记录 19、20、24）、30 分钟合成负载（macOS，记录 23）已完成。Windows 10/11 实机验证、Defender 扫描、干净机器解压即用未完成 |
 
 ## 记录模板
 
@@ -694,3 +694,36 @@
   - CI 的 `package-windows` 作业在 `package:verify` 之后跑 `pnpm package:runtime`。
 - 验证：macOS 27 arm64，darwin-arm64 发布包：4 项全部通过，篡改的包退出码 1，整轮约 3.7 秒。开发版 Electron 上这三种入口都生效，是记录 18 的对照组，本条没有重复。Windows 上的结果以推送后的 CI 为准。
 - 遗留：CDP 模式下的 `native.onTop` 可以改为按进程号找窗口，还没做；Windows 10/11 桌面、Defender 扫描、干净机器解压即用仍要在 Windows 实机上做。
+
+## 23 — M5 合成负载（A9 / C10）
+
+- 日期：2026-09-30
+- harness：claude-code
+- model：claude-opus
+- 提交：`555e37b`（分支 `claude/m5-loadtest`，起点 `826c5a8`），合并 `f82b05e`，以及本条所在提交
+- 内容：
+  - 新增 `pnpm loadtest`（`scripts/loadtest/`）：接收端在独立子进程里按 `src/main/index.ts` 接好 EventStore、startServer 与 50 ms 合并通知，按 useMonitor 的 100 ms 节流经 `createMonitorHandlers` 拉快照，用 v8.serialize 近似 IPC；父进程经 HTTP 投递真实协议事件，含突发、近 64 KiB 事件与七类被拒请求；采样 RSS、GC 后 heap、事件循环阻塞、ELU、ingest/appendFileSync/readdirSync/快照/分页耗时、磁盘段；结束后测负载中导出、导出、回放、重启恢复和最坏情况探针。报告写到 `.runtime/loadtest/<时间戳>-<运行时>/`。
+  - 新增 `tests/loadtest-generator.test.ts`：生成的事件全部通过协议校验且 ≤ 64 KiB，覆盖 16 种事件类型，被拒请求确实非法，EventStore 全部接收。长负载不进 `pnpm test`。
+  - `tsconfig.json` 把 `scripts/loadtest` 纳入 typecheck；`package.json` 只加 `loadtest`。未改 `src/`。
+  - 三份报告原文存到 `docs/reports/`：`2026-09-30-loadtest-30min-electron.md`、`2026-09-30-loadtest-30min-node.md`、`2026-09-30-loadtest-probe-electron.md`。
+  - 新增 `.github/workflows/loadtest.yml`：只手动触发，三平台各跑一次，报告作为 artifact 上传，不作为合并门槛。
+- 验证：macOS 27.0（26A428），Apple M2 8 核 8 GB，Node 22.23.2。分支上 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（130 项）、`pnpm build` 通过。30.0 分钟、45,000 条有效事件（25/s，每 5 分钟突发 400 条，795 个 run，近上限 906 条，另有约 3% 被拒请求），Electron 42.11.6 as node 与 Node 22 各一次并行：
+  - 有效事件失败 0、异常响应 0；被拒请求都得到预期状态（400、401、409、413，重复为 `accepted:false`）。HTTP p50 0.75 / p95 5.7 / p99 11.9 ms；ingest p50 0.29 / p99 1.35 ms；主进程侧更新延迟（入库到快照序列化完成）p95 102 ms。
+  - 跟随 500 决策 + 500 尝试的长 run 时，每次快照 v8 约 4.3–5.8 MB，序列化 p50 8 ms，占主线程 8.8%；ingest 共占 1.1%。
+  - 内存窗口 13.5 分钟到 20,000 条（26.35 MB）后持平；磁盘峰值 31.79 MB、保留 8 段后持平；GC 后 heap 14 分钟 33 MB → 29 分钟 38 MB（Node 41 → 46 MB），增量来自未结束 run 在聚合状态里保留的窗口外事件（1,123 条 / 1.9 MB），受 200 个 run 限制，30 分钟内未到稳态。macOS 内存紧张时 RSS 波动大，不作为保留内存依据。
+  - 导出 30.45 MB 同步 637 ms；负载中导出 515 ms，期间 HTTP 最长 505 ms，超过 Python 发送端默认 0.5 秒超时（发送端会重试）。回放打开 422 ms，完整导出 23,243 条，回放只保留最早 20,000 条；每步 replaySnapshot 最长 159 ms。重启恢复 589 ms。
+  - 探针 4 个 run × 520 个约 60 KB 的决策：窗口仍是 32 MiB，聚合状态在窗口外多保留 2,897 条 / 84 MB，GC 后 heap 121.5 MB；所选 run 每次快照 31 MB。
+  - 30 分钟内两个接收端在相同时刻出现 appendFileSync 卡顿（100–180 ms 六次、约 1 s 两次），为系统级文件系统卡顿（磁盘 96% 满，其他 agent 同时运行），同步写使整个进程停住。微基准：384 B 行 appendFileSync 约 28 µs，常开 fd + writeSync 约 3–4 µs。
+  - 合并进 `claude/m5-integration`（含记录 21 的接收端修复）后在本机重跑：165 项测试通过；`pnpm loadtest --duration 60s --rate 25 --runtime node --no-probe` 1,500 条有效事件失败 0，401 等被拒状态照旧，HTTP p95 3.0 ms，主进程侧更新延迟 p95 99 ms。
+  - 未在 Windows / Linux 执行；未含渲染进程（可见延迟见记录 19、20）；未测打包版本与杀软。
+- 遗留：A9 聚合状态只有条数上限、没有字节上限；快照每次带整个所选 run；`droppedRuns` 只增不减；导出、回放、恢复同步阻塞主线程；回放丢最新的超限事件；C10 同步写会把文件系统卡顿传给主线程，每条事件还有一次 readdirSync。建议依次考虑所选 run 投影与按需详情、聚合字节预算、每段常开 fd、只在轮转时清理旧段、回放 checkpoint；不改数据库、不加框架。Windows 实测待做。
+
+## 24 — Windows runner 上运行时核对发布包的 fuses
+
+- 日期：2026-09-30
+- harness：claude-code
+- model：claude-opus
+- 提交：`d3e83e3` 的 CI 结果（记录在本条所在提交）
+- 内容：CI 运行 [36632809142](https://github.com/lawchli/jev-monitor-bar/actions/runs/36632809142) 全部成功。`package-windows` 作业在 Windows Server 2025 runner 上打包后跑 `pnpm package:runtime`（记录 22）：`ELECTRON_RUN_AS_NODE` 不生效、`NODE_OPTIONS` 不生效、`--inspect` 不生效、改动 `app.asar` 的副本退出码 1 拒绝启动，4 项通过。随后 `pnpm smoke --native --app release/jev-monitor-bar-win32-x64/jev-monitor-bar.exe` 通过。
+- 验证：结论来自该运行的作业日志。这是 Windows Server runner，不是 Windows 10/11 桌面；没有 SmartScreen（CI 里下载的包没有网络来源标记）、没有 Defender 扫描。
+- 遗留：Windows 10/11 实机（SmartScreen、无 UAC、Defender、干净机器解压即用、混合 DPI）。

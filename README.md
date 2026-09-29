@@ -2,7 +2,7 @@
 
 全平台、Windows 优先的只读决策监视小窗。宿主（运行 TypeSafe/JEV 的任务程序）发送摘要事件 → 本机鉴权接收 → 追加日志 → Electron/React 小窗。窗口里分开显示模型判断、应用选择、执行和验证，不控制宿主。此仓库独立于 `jev_zzz`。
 
-> 状态（2026-09-30）：可以从源码运行。紧凑条、展开视图、时间线、导出与回放、Python 发送器和 `pnpm demo` 已在同一份代码里，审计 A1–A8 的修复已接入（实施记录 09、10、A8、11），并在 Linux X11 虚拟机上走过一次 `pnpm demo` 闭环（记录 11）。`pnpm package` 能打出未签名的目录 zip，`pnpm smoke` 在 macOS 上自动走完闭环验收并测了可见延迟（记录 18、19）。Windows 发布包还没有在 Windows 上启动过，Windows 原生窗口行为和 Defender 扫描还没做，30 分钟负载还没测。进度以 [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md) 为准，已知问题见 [`docs/AUDIT.md`](docs/AUDIT.md)。
+> 状态（2026-09-30）：可以从源码运行。紧凑条、展开视图、时间线、导出与回放、Python 发送器和 `pnpm demo` 已在同一份代码里，审计 A1–A8 的修复已接入（实施记录 09、10、A8、11），并在 Linux X11 虚拟机上走过一次 `pnpm demo` 闭环（记录 11）。`pnpm package` 能打出未签名的目录 zip，`pnpm smoke` 在 macOS 上自动走完闭环验收并测了可见延迟（记录 18、19）。win32-x64 发布包在 Windows Server runner 上启动过，fuses 在运行时生效（记录 22、24）。30 分钟、45,000 条事件的合成负载在 macOS 上跑过（记录 23）。Windows 10/11 桌面实机、Defender 扫描和干净机器上解压即用还没做。进度以 [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md) 为准，已知问题见 [`docs/AUDIT.md`](docs/AUDIT.md)。
 
 ## 现在能做什么
 
@@ -38,9 +38,10 @@ pnpm test
 pnpm build
 python -m unittest discover -s python/tests -v
 pnpm smoke     # 用 Playwright 启动真实窗口，自动跑闭环验收、窗口断言和可见延迟；会在屏幕上开一个窗口
+pnpm loadtest  # 合成负载，默认 30 分钟；--duration 60s 可以先跑一分钟
 ```
 
-`pnpm smoke` 的报告、截图和导出文件在 `.runtime/smoke/<平台>-<架构>/`，任一断言失败时退出码非零。`--native` 另外读系统层的前台应用和窗口层级（macOS 不需要额外权限；Windows 版探针还没在 Windows 上跑过）。`--app <可执行文件或 .app>` 测打包后的程序：发布包关掉了 `--inspect`，这时只连渲染进程，读不到主进程窗口状态的断言和导出回放记为跳过。
+`pnpm loadtest` 在独立子进程里跑真实的接收端、存储、聚合与快照，经 HTTP 投递真实协议事件，报告写到 `.runtime/loadtest/<时间戳>-<运行时>/`；2026-09-30 的结果存档在 [`docs/reports/`](docs/reports/)。`pnpm smoke` 的报告、截图和导出文件在 `.runtime/smoke/<平台>-<架构>/`，任一断言失败时退出码非零。`--native` 另外读系统层的前台应用和窗口层级（macOS 不需要额外权限；Windows 版探针还没在 Windows 上跑过）。`--app <可执行文件或 .app>` 测打包后的程序：发布包关掉了 `--inspect`，这时只连渲染进程，读不到主进程窗口状态的断言和导出回放记为跳过。
 
 只跑核心测试时可以设置 `ELECTRON_SKIP_BINARY_DOWNLOAD=1` 跳过 Electron 二进制下载，CI 就是这样做的。改了 `src/protocol.ts` 的 schema 后，用 `pnpm schema:export` 重新导出 `protocol/event.schema.json`。
 
@@ -128,9 +129,10 @@ CI 的 `package-windows` 作业在 `windows-latest` 上打 win32-x64 包并核�
 - 只显示宿主发来的事件。读不到模型的隐藏思考，不生成推理过程，也不补写理由；没有接入的宿主就没有数据。
 - 只在本机。接收端只监听 `127.0.0.1`，不联网，没有遥测和账号。
 - Linux Wayland 上多数合成器不允许应用置顶或自定位窗口，小窗可能被遮挡，位置也可能恢复不了。
-- Windows 原生窗口行为未验证，Windows 发布包没有在 Windows 上启动过，没有 Defender 扫描记录。macOS 只验证了表里列出的几项。30 分钟负载与内存（审计 A9）还没测。
+- Windows 10/11 桌面实机没有验证，没有 Defender 扫描记录；Windows 上只在 GitHub 的 Windows Server runner 上跑过。macOS 只验证了表里列出的几项。
+- 内存按条数封顶，不按字节（审计 A9，记录 23）：事件窗口最多 20000 条且不超过 32 MiB，但聚合状态（200 个运行 × 每个 500 个判断与 500 次尝试）会另外引用窗口外的事件。30 分钟常规负载下 GC 后 heap 约 38 MB；每个判断都带约 60 KB 正文的极端情况下，窗口外多占约 84 MB，所选运行的每次快照约 31 MB。
+- 写盘是同步的：文件系统卡顿时整个接收端会停住（实测最长约 1 秒），发送端会超时重试（C10，记录 23）。导出、回放和重启恢复也同步读文件，30 MB 数据约 0.4–0.6 秒。回放超过 20000 条时保留最早的 20000 条。
 - 去重只在内存窗口内，窗口外的旧事件重发可能被再次接受（C8）。跨 producer 的先后取决于发送端时钟（C11）。完全损坏的尾行不保留 cursor 高水位（C6）。详见 `docs/INTEGRATION.md` 第 6、7 节。
-- 导出和回放在主进程里同步读文件。
 - 许可证由仓库所有者决定，暂未授予开源许可证。
 
 ## 已核实的边界（2026-09-23）

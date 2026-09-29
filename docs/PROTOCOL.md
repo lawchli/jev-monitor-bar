@@ -228,3 +228,10 @@ pnpm schema:export
 - 时钟（C11）：`occurred_at` 用发送端时钟，`received_at` 用接收端写入时的时钟，两者都保存。跨 producer 的排序只用 `occurred_at` 和 `event_id`，不用 `received_at`，所以接收先后不能纠正发送端之间的时钟偏差。
 - 残行与 cursor（C6）：完全无法 `JSON.parse` 的尾行不抬高高水位。如果这行原来占用了某个 cursor，重启后这个 cursor 可能分给新事件。写入用 `appendFileSync`，返回后才确认，但没有调用 fsync。
 - `diagnostic`：桌面主进程用 `new EventStore(paths.eventsDir)` 构造，诊断模式为关，也没有开关。所以当前 `diagnostic` 入库时总是被删掉。
+
+## 更正（2026-09-30，接收端修复后）
+
+上面「补充」里有两条记的是修复前的行为，原文保留，这里更正：
+
+- 鉴权：接收端现在只接受 `Authorization: Bearer <token>`。不带 `Bearer ` 前缀、直接给 token 也得到 401，与本文开头「版本与传输」一致。
+- 超时：`http.createServer` 设了 `connectionsCheckingInterval: 500`。正文没发完的请求在 `requestTimeout` 的 2 秒后，大约 2–2.5 秒内得到 408；修复前约 10.7 秒，最坏 30 秒。

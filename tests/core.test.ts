@@ -176,6 +176,40 @@ test('rule override, retry, and unverified completion are tracked separately', (
   assert.equal(t2.status, 'verification_failed');
 });
 
+test('receiver answers a stalled request body with 408 within a few seconds', async () => {
+  const dir = tempDir();
+  const store = new EventStore(path.join(dir, 'events'));
+  const srv = await startServer(store, path.join(dir, 'session.json'));
+  try {
+    const started = Date.now();
+    const status = await new Promise<number>((resolve, reject) => {
+      const req = http.request(
+        srv.session.url + '/events',
+        {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'content-length': '100',
+            authorization: `Bearer ${srv.session.token}`,
+          },
+        },
+        res => {
+          res.resume();
+          resolve(res.statusCode!);
+        },
+      );
+      req.on('error', reject);
+      // Send part of the declared body and never finish it.
+      req.write('{"type":');
+    });
+    const elapsed = Date.now() - started;
+    assert.equal(status, 408);
+    assert.ok(elapsed < 5000, `408 after ${elapsed} ms`);
+  } finally {
+    await srv.close();
+  }
+});
+
 function request(url: string, headers: Record<string, string>, body: string, chunked = false) {
   return new Promise<number>((resolve, reject) => {
     const req = http.request(url, {method: 'POST', headers: {'content-type': 'application/json', ...headers}}, res => {
@@ -199,6 +233,8 @@ test('receiver enforces credential, origin, size, and sequence conflicts', async
       auth = {authorization: `Bearer ${srv.session.token}`};
     const body = JSON.stringify(ev('heartbeat'));
     assert.equal(await request(url, {}, body), 401);
+    assert.equal(await request(url, {authorization: srv.session.token}, body), 401);
+    assert.equal(await request(url, {authorization: `bearer ${srv.session.token}`}, body), 401);
     assert.equal(await request(url, {...auth, origin: 'https://example.com'}, body), 403);
     assert.equal(await request(url, auth, 'x'.repeat(70000)), 413);
     assert.equal(await request(url, auth, 'x'.repeat(70000), true), 413);

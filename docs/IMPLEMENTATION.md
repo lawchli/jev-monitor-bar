@@ -663,3 +663,17 @@
   - 本条在 `package-windows` 作业里加一步：用 `pnpm smoke --no-build --native --app release/jev-monitor-bar-win32-x64/jev-monitor-bar.exe` 在 runner 上启动发布包。结果以推送后的运行为准。
 - 验证：结论来自 GitHub Actions 的作业日志（`gh run view --log`）。这些是 Windows Server runner 上的窗口，不是 Windows 10/11 桌面；没有多显示器与混合 DPI，没有手动拖动缩放，也没有 Defender 扫描。冒烟测试用的是开发构建，不是发布包（发布包的那一步是本条新加的）。
 - 遗留：Windows 10/11 实机验收（发布包启动、SmartScreen、无 UAC、置顶与混合 DPI、Defender、干净机器解压即用）。
+
+## 21 — 接收端必须带 Bearer 前缀，408 不再迟到
+
+- 日期：2026-09-30
+- harness：claude-code
+- model：claude-opus
+- 提交：本条所在提交
+- 内容：记录 16 核对接收端时发现两处与协议不符，都在 `src/server.ts`：
+  - 鉴权用 `replace(/^Bearer /, '')` 取 token，所以不带前缀、直接给 token 也能通过，和 PROTOCOL.md「`Authorization: Bearer <token>`」不一致。改为只在以 `Bearer ` 开头时取后面的部分，否则按错误凭证 401。仓库里的发送端（Python 发送器、`demo-host.mjs`、`pnpm smoke`、负载测试）都带前缀。
+  - `requestTimeout = 2000` 只在 Node 的周期检查（`connectionsCheckingInterval`，默认 30 秒）时生效，正文发一半的请求约 10.7 秒、最坏 30 秒才得到 408，期间占着一个连接（上限 32）。改为 `http.createServer({connectionsCheckingInterval: 500}, …)`。
+  - `tests/core.test.ts`：鉴权测试加上不带前缀和小写 `bearer` 两种 401；新增「正文发一半在 5 秒内得到 408」。
+  - `docs/PROTOCOL.md` 追加「更正（2026-09-30，接收端修复后）」，`docs/INTEGRATION.md` 的状态码表与发送端说明随之更正，原来的观测结果保留并注明是修复前。
+- 验证：macOS arm64：去掉修复时两个测试失败（408 在 30007 ms 后才到；不带前缀得到 200），恢复后通过。`pnpm format:check`、`pnpm typecheck`、`pnpm test`（160 项）通过；Python 3.9、3.13 的 unittest 通过。
+- 遗留：桌面端仍没有诊断模式开关，`diagnostic` 入库时总被删掉（安全的一侧）；`appendFileSync` 确认前不 fsync，断电可能丢掉已确认的尾行。

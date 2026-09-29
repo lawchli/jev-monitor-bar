@@ -358,11 +358,11 @@ sender.emit(
 | 400 | `{"error":"Incomplete request"}` | 正文没传完连接就断了 | 可以用同一个 `event_id` 重发 |
 | 413 | `{"error":"64 KiB event limit"}` | 超过 65536 字节 | 丢弃，或缩短摘要后作为新事件发送 |
 | 415 | `{"error":"JSON required"}` | `Content-Type` 不对 | 补上 `application/json` |
-| 401 | `{"error":"Local session credential required"}` | 没带 token 或 token 已过期 | 重读会话文件。token 变了就用新 token 重发，没变就退避 |
+| 401 | `{"error":"Local session credential required"}` | 没带 token、token 已过期，或缺少区分大小写的 `Bearer ` 前缀 | 重读会话文件。token 变了就用新 token 重发，没变就退避 |
 | 403 | `{"error":"Origin rejected"}` | 带了 `Origin`，或来源不是本机 | 去掉 `Origin`，确认连的是 `127.0.0.1`。这不是临时错误 |
 | 404 | `{"error":"Not found"}` | 方法或路径不对。只有 `GET /health` 和 `POST /events` | 修正路径 |
 | 503 | `{"error":"Storage unavailable"}` | 写盘失败，这条没有保存 | 退避后用同一个 `event_id` 重发 |
-| 408 | 空（Node 内置） | 请求在 `requestTimeout`（2 秒）内没有发完。Node 周期检查，实际回复可能晚于 2 秒 | 退避后重发 |
+| 408 | 空（Node 内置） | 请求在 `requestTimeout`（2 秒）内没有发完。Node 每 0.5 秒检查一次，所以大约 2–2.5 秒回复 | 退避后重发 |
 | 无响应 | | 连接失败或超时：监视器不在运行，或已换了端口 | 重读会话文件，按离线处理 |
 
 一条请求有几个问题时，只报最先检查到的那个，顺序见 `docs/PROTOCOL.md`「版本与传输」。
@@ -373,7 +373,7 @@ sender.emit(
 - 重发时保持 `event_id` 和 `sequence` 不变。只要还在去重窗口内，重复会得到 200 和 `accepted:false`。
 - 不要把一个 `sequence` 用在另一条事件上。
 - 长时间没有事件时，每隔几秒发一条 `heartbeat`（Python 发送器默认 5 秒），界面才不会显示「可能断开」。
-- 接收端只把 `Authorization` 开头的 `Bearer ` 去掉再比较，不带前缀也能通过。不要依赖这一点，按上面的格式发。
+- `Authorization` 必须是 `Bearer <token>`。`Bearer ` 前缀区分大小写，不带前缀或写成 `bearer` 都得到 401。
 
 ### Node 示例
 
@@ -516,7 +516,7 @@ pnpm demo:host --home <数据目录的绝对路径> --fast --once
 
 - 第 2 节的完整示例，3.13 与 3.9 各一次：10 条全部 `sent`，run 为 `completed`，尝试为 `passed`。
 - 第 3 节的片段放进同一个 run，3.13 与 3.9 各一次：22 条全部 `sent`。判断 3 个 `selected`、1 个 `failed`；尝试 `act-stop` 为 `selected`，`act-2` 为 `unknown`，`act-3/try-1` 为 `failed`，`act-3/try-2` 为 `unverified`；`anomalies` 为 0。
-- 第 5 节的 Node 示例：三条都是 200 `accepted:true`。curl 覆盖了表里的 200（新事件与重复）、409、两种 400、401、403、404、413（带与不带 `Content-Length`）、415。把当前段文件设为只读得到 503，恢复后同一个 `event_id` 被接受。正文发一半不再发，约 10.7 秒后得到 408。不带 `Bearer ` 前缀的 token 通过了健康检查；小写 `bearer` 得到 401。
+- 第 5 节的 Node 示例：三条都是 200 `accepted:true`。curl 覆盖了表里的 200（新事件与重复）、409、两种 400、401、403、404、413（带与不带 `Content-Length`）、415。把当前段文件设为只读得到 503，恢复后同一个 `event_id` 被接受。正文发一半不再发，约 10.7 秒后得到 408。不带 `Bearer ` 前缀的 token 通过了健康检查；小写 `bearer` 得到 401。这两条是修复前的结果：之后接收端改为必须带 `Bearer ` 前缀，并把 Node 的超时检查间隔改为 0.5 秒（见 `docs/PROTOCOL.md`「更正（2026-09-30）」），`tests/core.test.ts` 覆盖了这两处。
 - 停掉接收端，再用同一目录重启（新端口、新 token）：发送器（`queue_size=5`）离线期间丢了 19 条，恢复后先发 `telemetry.dropped` `count=19`，其余 34 条全部写入，run 的 `dropped` 为 19。
 - 第 4 节的脱敏（全用假值）：候选名 `password` 和 `sk-…` 原样保留，值被替换；`ghp_…` 没有被替换；`diagnostic` 被删掉。
 - 没有接收端时：`queue_size=3` 下 5 次调用返回 True、True、True、False、False，共约 0.3 ms；`close(timeout=0.3)` 用了约 310 ms，之后 `dropped` 仍为 2。这是修复前的结果：之后 `close` 改为把队列里剩下的 3 条计入 `dropped`，同样条件下为 5（`test_close_timeout_counts_unsent_events_as_dropped`）。

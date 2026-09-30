@@ -13,7 +13,7 @@
 | M2 | Electron 主进程、平台模块、preload、Windows 置顶小窗 | 集成分支已有主进程、平台模块、preload 与窗口位置恢复（记录 08）。原生 Windows 窗口未验证 |
 | M3 | 紧凑/展开 UI、详情、时间线、断线提示、导出与回放 | 集成分支已有紧凑条、展开视图、导出与回放（记录 08） |
 | M4 | Python 发送器、示例宿主、`pnpm demo` | 集成分支已有 Python 发送器、示例宿主与 `pnpm demo`（记录 08） |
-| M5 | 接入文档、延迟与负载测试、Windows 实机验证与打包；macOS/Linux 适配 | 进行中：接入文档（记录 16）、目录 zip 打包与读回核对（记录 18、22）、桌面冒烟测试与可见延迟（macOS 与 Windows Server runner，记录 19、20、24）、30 分钟合成负载（macOS，记录 23）、写盘与回放后续（记录 26、27）、合并前审计（记录 28）已完成；Windows 11 实机上自动检查、打包与发布包启动已通过（记录 29）。Windows 真实桌面观察、Defender 扫描、干净机器解压即用未完成 |
+| M5 | 接入文档、延迟与负载测试、Windows 实机验证与打包；macOS/Linux 适配 | 进行中：接入文档（记录 16）、目录 zip 打包与读回核对（记录 18、22）、桌面冒烟测试与可见延迟（macOS 与 Windows Server runner，记录 19、20、24）、30 分钟合成负载（macOS，记录 23）、写盘与回放后续（记录 26、27）、合并前审计（记录 28）已完成；Windows 11 实机上自动检查、打包、发布包启动、负载与 200% 缩放已通过（记录 29–31）；PR #14、#15 已合入 main。启动时不抢焦点的实机确认、Defender 扫描、干净机器解压即用未完成 |
 
 ## 记录模板
 
@@ -820,3 +820,18 @@
   - 未验证：启动时不抢焦点（断开的会话里没有前台窗口）、200% 缩放下的清晰度（当前会话实际是 96 DPI）、用鼠标拖动（SendInput 在断开的会话里无效）、两窗口叠在一起的整屏截图。
 - 验证：Windows 上的结论来自该会话回报的命令与 UI Automation 输出。本机（macOS arm64）：`pnpm format:check`、`pnpm typecheck` 通过，`pnpm smoke --native` 37/37，可见延迟 p95 94 ms。Windows 上去掉菜单栏的效果待复测。
 - 遗留：同记录 29；去菜单栏后在 Windows 上复测；用户在本机登录后补做不抢焦点、200% 清晰度和整屏截图。
+
+## 31 — Windows 11 实机在 main 上复测
+
+- 日期：2026-09-30
+- harness：claude-code（Windows 上的 Claude Code 会话执行，本会话记录）
+- model：claude-opus（本条记录者）
+- 提交：本条所在提交；被测的是 `main@431d486`（PR #14、#15 合并后，内容与 `21a4c44` 相同）
+- 内容与验证（LANCE-GAMEPC，Windows 11 IoT 企业版 LTSC 26100，Node 24.19.0，pnpm 11.19.0，Python 3.12）：
+  - `pnpm format:check`、`pnpm typecheck`、`pnpm build` 通过；`pnpm test` 188 项全部通过（记录 29 的 demo-host 两项失败已消失，demo-host 与 store-writes 单独跑 19/19）；Python 21 项通过。
+  - `pnpm loadtest --duration 5m --rate 25 --runtime node --no-probe`，与记录 29（改写盘前）对比：7,500 条有效事件失败 0；writeSync 7,501 次 p50 0.02 / p99 0.06 / max 0.61 ms，openSync 4 次，落盘共占 ingest 19.6%（原 appendFileSync 占 74.2%）；readdirSync 7 次（原 7,504 次）；ingest p50 0.10 / p99 0.53 / max 4.64 ms（原 0.58 / 1.27 / 789.51）；HTTP max 107 ms、超过 500 ms 0 次（原 790 ms、4 次），107 ms 出现在负载中导出期间（导出 130 ms）；主进程更新延迟 max 180 ms（原 829）。导出 178 ms、回放解析 124 ms、重启恢复 208 ms、损坏行 0；GC 后 RSS 156 MB、heap 19.7 MB。
+  - `pnpm package`、`package:verify` 全部 ok，`package:runtime` 4/4；exe 版本信息 CompanyName `lawchli`、LegalCopyright `Copyright (C) 2026 lawchli`。zip SHA-256 `0f3055396e350e19be8faa0fa0ba9b2bd84849bfb1ef40b1c3ebaea8ac72ae87`（未签名）。
+  - 记录 30 的菜单栏：UI Automation 找不到 MenuBar 和 File/Edit/View/Window 菜单项，PrintWindow 截图顶部没有菜单栏。`GetDpiForWindow` 为 192（200%），窗口 800×264 物理像素（400×132 逻辑像素），客户区高约 96 逻辑像素（原网页内容区 67 px）。截图里 200% 下文字清晰。
+  - 关闭后 110 ms 退出，`session.json` 被删除，没有残留进程。
+- 未验证：启动时不抢焦点、整屏截图里监视窗口叠在记事本上——检查开始时远程桌面会话是 Active，运行中断开（Disc），`GetForegroundWindow` 为 0、`CopyFromScreen` 失败。Defender 扫描（实时保护关闭）、干净机器解压即用。取证文件（`docs/reports/2026-09-30-windows/`）还在 PC 的工作区里未提交，等用户在那边的会话里批准提交。
+- 遗留：同上「未验证」；审计后续项见 `docs/AUDIT.md`。

@@ -9,7 +9,7 @@ import {monitorEventLoopDelay, performance, type EventLoopUtilization} from 'nod
 import {EventStore} from '../../src/store';
 import {startServer} from '../../src/server';
 import {createMonitorHandlers, type ReplayFileIO} from '../../src/main/ipc-api';
-import {pageReplay, replaySnapshot, REPLAY_MAX_BYTES} from '../../src/replay';
+import {pageReplay, replaySnapshot, ReplayTimeline, REPLAY_MAX_BYTES} from '../../src/replay';
 import {pickDefaultRun} from '../../src/renderer/view-model/common';
 import type {Snapshot} from '../../src/ipc';
 import type {StoredEvent} from '../../src/protocol';
@@ -383,18 +383,33 @@ async function replayFrom(file: string, runId?: string) {
   const t4 = performance.now();
   const page = pageReplay(events, events.length, {runId: focus, beforeCursor: full.events[0]?.cursor, limit: 100});
   const pageMs = performance.now() - t4;
+  // 渲染端实际用的检查点：打开时在末尾建好检查点，之后跳到一半、再前进一条。
+  const t5 = performance.now();
+  const timeline = new ReplayTimeline(events);
+  timeline.snapshot(events.length, focus);
+  const timelineFirstMs = performance.now() - t5;
+  const t6 = performance.now();
+  timeline.snapshot(Math.floor(events.length / 2), focus);
+  const timelineMidMs = performance.now() - t6;
+  const t7 = performance.now();
+  timeline.snapshot(Math.floor(events.length / 2) + 1, focus);
+  const timelineStepMs = performance.now() - t7;
   return {
     fileBytes: fs.statSync(file).size,
     parseMs,
     events: events.length,
     invalidLines: data.invalidLines,
     truncated: data.truncated,
+    omitted: data.omitted ?? 0,
     ipcBytes,
     serializeMs,
     replaySnapshotFullMs: fullMs,
     replaySnapshotMidMs: midMs,
     replaySnapshotBytes: v8.serialize(full).length,
     replayPageMs: pageMs,
+    timelineFirstMs,
+    timelineMidMs,
+    timelineStepMs,
     replayPageRows: page.length,
     before,
     afterParse,

@@ -1,6 +1,6 @@
 import {useEffect, useMemo, useState} from 'react';
 import type {MonitorBridge, ReplayData} from '../../ipc';
-import {fileBase, pageReplay, replaySnapshot} from '../../replay';
+import {ReplayTimeline, fileBase, pageReplay} from '../../replay';
 import {DecisionsTab} from '../expanded/DecisionsTab';
 import {ExecutionTab} from '../expanded/ExecutionTab';
 import {TimelineTab} from '../expanded/TimelineTab';
@@ -19,7 +19,9 @@ export function ReplayView({replay, now, onExit}: {replay: ReplayData; now: numb
   const [speed, setSpeed] = useState<Speed>(1);
   const [runId, setRunId] = useState<string | undefined>();
   const [tab, setTab] = useState<TabId>('decisions');
-  const snapshot = useMemo(() => replaySnapshot(replay.events, index, runId), [replay.events, index, runId]);
+  // 拖动和播放都从最近的检查点接着算，不再每步从第 0 条重算。
+  const timeline = useMemo(() => new ReplayTimeline(replay.events), [replay.events]);
+  const snapshot = useMemo(() => timeline.snapshot(index, runId), [timeline, index, runId]);
   const run = snapshot.run;
   const summary = run ? runSummary(run, now) : undefined;
   const selectedRunId = run?.id ?? pickDefaultRun(snapshot.runs)?.id ?? '';
@@ -73,7 +75,9 @@ export function ReplayView({replay, now, onExit}: {replay: ReplayData; now: numb
       <p className="replay-banner" data-testid="replay-banner" title={replay.file}>
         回放：{name}（不影响实时接收）
         {replay.invalidLines > 0 ? ` · 无效行 ${replay.invalidLines}` : ''}
-        {replay.truncated ? ' · 已截断，只保留前 20000 条' : ''}
+        {replay.truncated
+          ? ` · 只保留最近 ${replay.events.length} 条${replay.omitted ? `，已略过更早的 ${replay.omitted} 条` : ''}`
+          : ''}
       </p>
       <div className="replay-controls">
         <button type="button" onClick={() => pauseAt(index - 1)}>

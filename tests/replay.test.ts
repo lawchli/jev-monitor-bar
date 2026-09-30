@@ -77,15 +77,16 @@ test('parseReplay rejects a present invalid cursor or received_at', () => {
   );
 });
 
-test('parseReplay keeps at most 20000 events', () => {
+test('parseReplay keeps the newest 20000 events', () => {
   const lines = Array.from({length: REPLAY_EVENT_LIMIT + 1}, (_item, index) => monitorLine(index + 1));
   lines.splice(3, 0, '{');
   const parsed = parseReplay(lines.join('\n'), parsers);
   assert.equal(parsed.events.length, REPLAY_EVENT_LIMIT);
   assert.equal(parsed.truncated, true);
+  assert.equal(parsed.omitted, 1);
   assert.equal(parsed.invalidLines, 1);
-  assert.equal(parsed.events[0].event_id, 'e1');
-  assert.equal(parsed.events.at(-1)?.event_id, `e${REPLAY_EVENT_LIMIT}`);
+  assert.equal(parsed.events[0].event_id, 'e2');
+  assert.equal(parsed.events.at(-1)?.event_id, `e${REPLAY_EVENT_LIMIT + 1}`);
 });
 
 test('replaying the first N events matches an EventStore loaded with those rows', () => {
@@ -574,6 +575,23 @@ test('opening more than 200 runs still shows the run picker', async () => {
     assert.equal(picker()?.value, 'run-200');
     assert.equal(text().includes('任务200'), true);
     assert.equal(text().includes('尚未回放到事件'), false);
+  });
+});
+
+test('a truncated replay says how many earlier events were left out', async () => {
+  const replay: ReplayData = {
+    file: '/tmp/long-export.jsonl',
+    invalidLines: 1,
+    truncated: true,
+    omitted: 3243,
+    events: [storedRun(0), storedRun(1)],
+  };
+  await renderReplay(replay, async dom => {
+    const banner = dom.window.document.querySelector('[data-testid="replay-banner"]')?.textContent ?? '';
+    assert.equal(
+      banner,
+      '回放：long-export.jsonl（不影响实时接收） · 无效行 1 · 只保留最近 2 条，已略过更早的 3243 条',
+    );
   });
 });
 

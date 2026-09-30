@@ -7,7 +7,7 @@ import http from 'node:http';
 import {validateEvent} from '../src/protocol';
 import {EventStore} from '../src/store';
 import {startServer} from '../src/server';
-import {metrics} from '../src/state';
+import {metrics, selectRunToEvict} from '../src/state';
 
 const tempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'jev-monitor-'));
 let n = 0;
@@ -108,6 +108,30 @@ test('secrets in text are redacted and diagnostics are dropped unless enabled', 
   assert.deepEqual(diag.events[0].payload.diagnostic, {headers: {authorization: '[REDACTED]'}, env: '[REDACTED]'});
 });
 
+test('redaction never pushes accepted text past the protocol limit, so restart and export keep the event', () => {
+  const dir = tempDir();
+  const store = new EventStore(dir);
+  // 4096 characters that validate, but "token=a" grows to "token=[REDACTED]" when redacted.
+  const summary = 'token=a ' + 'x'.repeat(4096 - 8);
+  // Emoji are one code point but two UTF-16 units; the limit counts code points, as Ajv does.
+  const question = 'password=b ' + '😀'.repeat(4096 - 11);
+  assert.equal(summary.length, 4096);
+  assert.equal([...question].length, 4096);
+  store.ingest(ev('progress.updated', {}, {summary}));
+  store.ingest(ev('decision.started', decision, {kind: 'choice', question}));
+  const stored = store.events.map(e => e.payload.summary ?? e.payload.question!);
+  assert.match(stored[0], /^token=\[REDACTED\] x+$/);
+  assert.equal([...stored[0]].length, 4096);
+  assert.equal([...stored[1]].length, 4096);
+  assert.doesNotMatch(stored.join(''), /token=a|password=b/);
+  const restored = new EventStore(dir);
+  assert.equal(restored.corruptLines, 0);
+  assert.equal(restored.events.length, 2);
+  const exported = restored.exportLines();
+  assert.equal(exported.skipped, 0);
+  assert.equal(exported.text.trim().split('\n').length, 2);
+});
+
 test('out-of-order decision events keep the resolved result', () => {
   const store = new EventStore(tempDir());
   const started = ev('decision.started', decision, {
@@ -176,6 +200,75 @@ test('rule override, retry, and unverified completion are tracked separately', (
   assert.equal(t2.status, 'verification_failed');
 });
 
+test('receiver answers a stalled request body with 408 within a few seconds', async () => {
+  const dir = tempDir();
+  const store = new EventStore(path.join(dir, 'events'));
+  const srv = await startServer(store, path.join(dir, 'session.json'));
+  try {
+    const started = Date.now();
+    const status = await new Promise<number>((resolve, reject) => {
+      const req = http.request(
+        srv.session.url + '/events',
+        {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'content-length': '100',
+            authorization: `Bearer ${srv.session.token}`,
+          },
+        },
+        res => {
+          res.resume();
+          resolve(res.statusCode!);
+        },
+      );
+      req.on('error', reject);
+      // Send part of the declared body and never finish it.
+      req.write('{"type":');
+    });
+    const elapsed = Date.now() - started;
+    assert.equal(status, 408);
+    assert.ok(elapsed < 5000, `408 after ${elapsed} ms`);
+  } finally {
+    await srv.close();
+  }
+});
+
+test('rejected requests close their connection so idle sockets cannot fill the receiver', async () => {
+  const dir = tempDir();
+  const store = new EventStore(path.join(dir, 'events'));
+  const srv = await startServer(store, path.join(dir, 'session.json'));
+  try {
+    const connection = (headers: Record<string, string>) =>
+      new Promise<string | undefined>((resolve, reject) => {
+        const req = http.request(srv.session.url + '/health', {headers}, res => {
+          res.resume();
+          resolve(res.headers.connection);
+        });
+        req.on('error', reject);
+        req.end();
+      });
+    assert.equal(await connection({}), 'close');
+    assert.equal(
+      await connection({authorization: `Bearer ${srv.session.token}`, origin: 'https://example.com'}),
+      'close',
+    );
+    assert.notEqual(await connection({authorization: `Bearer ${srv.session.token}`}), 'close');
+  } finally {
+    await srv.close();
+  }
+});
+
+test('eviction compares producer end times as instants, not strings', () => {
+  // 10:00+08:00 is 02:00Z, earlier than 03:00Z, although it sorts later as a string.
+  const runs = [
+    {id: 'utc', ended_at: '2026-01-01T03:00:00Z', last_received: '2026-01-01T03:00:01.000Z'},
+    {id: 'offset', ended_at: '2026-01-01T10:00:00+08:00', last_received: '2026-01-01T03:00:02.000Z'},
+    {id: 'open', last_received: '2026-01-01T00:00:00.000Z'},
+  ];
+  assert.equal(selectRunToEvict(runs)?.id, 'offset');
+});
+
 function request(url: string, headers: Record<string, string>, body: string, chunked = false) {
   return new Promise<number>((resolve, reject) => {
     const req = http.request(url, {method: 'POST', headers: {'content-type': 'application/json', ...headers}}, res => {
@@ -199,6 +292,8 @@ test('receiver enforces credential, origin, size, and sequence conflicts', async
       auth = {authorization: `Bearer ${srv.session.token}`};
     const body = JSON.stringify(ev('heartbeat'));
     assert.equal(await request(url, {}, body), 401);
+    assert.equal(await request(url, {authorization: srv.session.token}, body), 401);
+    assert.equal(await request(url, {authorization: `bearer ${srv.session.token}`}, body), 401);
     assert.equal(await request(url, {...auth, origin: 'https://example.com'}, body), 403);
     assert.equal(await request(url, auth, 'x'.repeat(70000)), 413);
     assert.equal(await request(url, auth, 'x'.repeat(70000), true), 413);

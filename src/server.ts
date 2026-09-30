@@ -4,21 +4,29 @@ import {EventStore} from './store';
 import {removeSessionFileIfOwned, writeSessionFile} from './session';
 export async function startServer(store: EventStore, sessionFile: string, port = 0) {
   const token = randomBytes(32).toString('hex');
-  const server = http.createServer(async (req, res) => {
+  // Node enforces requestTimeout only on this periodic check (default 30 s), so a stalled body got 408 about 10 s late.
+  const server = http.createServer({connectionsCheckingInterval: 500}, async (req, res) => {
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Cache-Control', 'no-store');
     const respond = (status: number, body: object) => {
       res.writeHead(status);
       res.end(JSON.stringify(body));
     };
+    // Rejected clients do not keep a connection: 32 idle keep-alive sockets would lock the real sender out.
+    const reject = (status: number, body: object) => {
+      res.setHeader('Connection', 'close');
+      respond(status, body);
+    };
     if (req.headers.origin || !['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress ?? '')) {
-      respond(403, {error: 'Origin rejected'});
+      reject(403, {error: 'Origin rejected'});
       return;
     }
-    const provided = Buffer.from(req.headers.authorization?.replace(/^Bearer /, '') ?? '');
+    // The `Bearer ` prefix is required; a bare token is rejected like a wrong one.
+    const header = req.headers.authorization ?? '';
+    const provided = Buffer.from(header.startsWith('Bearer ') ? header.slice('Bearer '.length) : '');
     const expected = Buffer.from(token);
     if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) {
-      respond(401, {error: 'Local session credential required'});
+      reject(401, {error: 'Local session credential required'});
       return;
     }
     if (req.method === 'GET' && req.url === '/health') {

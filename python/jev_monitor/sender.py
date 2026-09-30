@@ -256,6 +256,21 @@ class MonitorSender:
             thread.join(timeout)
             self._stop.set()
             self._wake.set()
+            # Events still queued when the timeout ends are never sent. Count them as dropped.
+            self._discard_queued()
+
+    def _discard_queued(self) -> None:
+        discarded = 0
+        while True:
+            try:
+                self._queue.get_nowait()
+            except queue.Empty:
+                break
+            discarded += 1
+        if discarded:
+            with self._lock:
+                self._stats['dropped'] += discarded
+            self._logger.warning('dropped %d queued events: close timed out', discarded)
 
     def __enter__(self) -> 'MonitorSender':
         return self
@@ -604,6 +619,9 @@ class MonitorSender:
             if status is not None:
                 self._logger.warning('retrying status=%s type=%s', status, event.get('type'))
             self._sleep_backoff()
+        if pending is not None:
+            # close() timed out before this event was delivered.
+            self._drop_unsendable(pending)
 
     def _pull(self):
         remaining = self.heartbeat_interval - (time.monotonic() - self._last_sent)

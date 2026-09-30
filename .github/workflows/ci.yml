@@ -1,8 +1,16 @@
 name: ci
 
+# 私有仓库的 Actions 分钟有限（macOS 按 10 倍、Windows 按 2 倍计）。
+# push 只在 main 上跑，PR 只跑 pull_request，避免同一提交跑两遍；同一分支的新提交取消旧运行。
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   core:
@@ -30,8 +38,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
-        python: ['3.9', '3.13']
+        include:
+          # 最低与最新版本在 Linux 上都跑；Windows 与 macOS 只跑最低版本，行为差异主要来自平台而不是小版本。
+          - {os: ubuntu-latest, python: '3.9'}
+          - {os: ubuntu-latest, python: '3.13'}
+          - {os: windows-latest, python: '3.9'}
+          - {os: macos-latest, python: '3.9'}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -39,3 +51,90 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: python -m unittest discover -s python/tests -v
+
+  package-windows:
+    # 打出未签名的 win32-x64 目录 zip 并读回核对（fuses、版本资源、asInvoker 清单、asar 完整性、SHA-256）。
+    # 之后在 runner 上启动发布包跑冒烟测试。runner 是 Windows Server，不等于 Windows 10/11 桌面实机验收，也没有 Defender 扫描。
+    runs-on: windows-latest
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1' # packager 自己下载并校验 Electron zip
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm package
+      - run: pnpm package:verify
+      # 启动发布包，确认 ELECTRON_RUN_AS_NODE、NODE_OPTIONS、--inspect 不生效，改动 app.asar 后拒绝启动。
+      - run: pnpm package:runtime
+      # 在 Windows 上实际启动发布包。发布包关掉了 --inspect，冒烟测试自动改用 CDP，
+      # 主进程窗口断言与导出回放记为跳过，系统层置顶与前台由 --native 探针检查。
+      - run: pnpm smoke --no-build --native --app release/jev-monitor-bar-win32-x64/jev-monitor-bar.exe
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-win32-x64-package
+          path: |
+            .runtime/smoke/**
+            !.runtime/smoke/*/home/electron-profile/**
+          if-no-files-found: warn
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jev-monitor-bar-win32-x64
+          path: |
+            release/jev-monitor-bar-*-win32-x64.zip
+            release/SHA256SUMS.txt
+          retention-days: 14
+
+  smoke:
+    # 用 Playwright 驱动真实 Electron 窗口：闭环验收、窗口断言、可见延迟 p95，截图作为 artifact 上传。
+    # Linux 在 xvfb 下没有窗口管理器，焦点相关断言可能不成立，先不阻塞。
+    # 每次 pnpm smoke 会清空自己的输出目录，所以每跑一次就先上传一次。
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.os == 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: node node_modules/electron/install.js
+      - run: pnpm build
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+      - if: runner.os == 'Windows'
+        run: pnpm smoke --no-build
+      - if: runner.os == 'Linux'
+        run: xvfb-run -a --server-args="-screen 0 1920x1080x24" pnpm smoke --no-build
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-${{ matrix.os }}
+          path: |
+            .runtime/smoke/**
+            !.runtime/smoke/*/home/electron-profile/**
+          if-no-files-found: warn
+          retention-days: 14
+      - if: runner.os == 'Windows'
+        # Windows 系统层探针（前台进程、是否置顶）还没在 Windows 上跑过，先只记录结果。
+        continue-on-error: true
+        run: pnpm smoke --no-build --native
+      - uses: actions/upload-artifact@v4
+        if: always() && runner.os == 'Windows'
+        with:
+          name: smoke-${{ matrix.os }}-native
+          path: |
+            .runtime/smoke/**
+            !.runtime/smoke/*/home/electron-profile/**
+          if-no-files-found: warn
+          retention-days: 14

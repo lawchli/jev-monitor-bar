@@ -85,3 +85,39 @@ P12 后续：仓库所有者改为按运行位置区分。Cursor 云端 agent �
 C6：P1-02 以及现在的集成分支只保住可解析 JSON 的 cursor。恢复时 `JSON.parse` 成功且 `cursor` 为安全整数的行会计入高水位，即使 `validateEvent` 失败。完全 torn、无法 `JSON.parse` 的行仍然没有高水位，只计入 `corruptLines`。
 
 演示 reconnect 若只是停发几十秒，并不等于验证了进程重启、凭证轮换和队列补发。P1-00 的边界守卫只扫描 `src` 里的 TypeScript 字符串，不覆盖 Python 重定向，也不能证明发布包不联网。
+
+## 2026-09-30 C10 常开段文件（claude-code / claude-opus）
+
+上面 C10 原行保留。本次按记录 23 的负载结果改了 `src/store.ts`，C10 改为部分处理：
+
+- 每个段只打开一次，每条事件用 `writeSync` 写完整行后才确认，仍不 fsync。写入出错时关闭当前段并返回 503，下一条事件重新打开；如果已经写出半行，下一条换新段。
+- 旧段只在启动时、新段写入第一行后清理；删除失败时至少 1 秒后再试，不再每条事件 `readdirSync`。
+- `droppedRuns` 最多 200 个，与 run 上限相同。超出时先去掉已不在 run 列表里、事件最早移出内存窗口的 run；仍在列表里的 run 保留标记，时间线仍能写「更早的事件已超出保留窗口」。
+- 桌面退出时，先关接收端，再关当前段。
+- macOS arm64 实测（机器上同时有其他 agent，负载 3–20）：20,000 条 403 B 行的隔离基准中，ingest p50 从 48–55 µs 降到约 12 µs。`pnpm loadtest --duration 3m --rate 25 --runtime node --no-probe` 基线与分支交替运行：单次落盘调用 p50 从 0.18–0.24 ms 降到 0.04–0.07 ms，`readdirSync` 从 4,504 次降到 6 次。
+- 写入仍是同步的。分支第二轮出现一次 518 ms 的 `writeSync` 卡顿，文件系统卡顿仍会停住主进程，只是每条事件的系统调用从打开、写、关闭、列目录减到一次写。Windows 与杀软环境未测。
+
+## 2026-09-30 合并前审计（claude-code / claude-opus）
+
+对 `claude/m5-integration@4841493`（含 PR #14 与 #15）和两个后续分支 `claude/c10-store-writes@446c734`、`claude/replay-window@0932f9a` 做只读审计。能跑的都写了探针实跑，不能跑的写明是读代码得出的。结论：没有严重或高危问题，不阻断合并 `main`。基线 `pnpm typecheck` 通过、`pnpm test` 165/165、`pnpm audit --prod` 无已知漏洞。
+
+| 编号 | 级别 | 问题 | 状态 |
+| --- | --- | --- | --- |
+| M1 | 中 | 脱敏会把 "token=a" 变长，4096 字的正文入库后超出协议上限，重启和导出时被当作坏行丢掉，发送端却已收到确认 | 已修（记录 28） |
+| M2 | 中 | 自由文本脱敏漏掉常见写法：带引号的值（JSON、Python repr）、`AWS_SECRET_ACCESS_KEY=`、`ghp_`/`xoxb-`/`AKIA`、JWT、URL 里的用户名密码、`Cookie:`、PEM；`Authorization: Basic …` 只替换了 `Basic`。PROTOCOL.md 与 INTEGRATION.md 把能力写多了 | 待办 |
+| M3 | 中 | 已结束的 run 被淘汰后，再来一条迟到事件会把它重建成未结束的 run（名字变成 id、模拟标记丢失），持续心跳时一直不再被淘汰 | 待办 |
+| L1 | 低 | 401/403 不断开连接，未鉴权的本机进程占满 32 个连接时发送端被拒 | 已修（记录 28） |
+| L2 | 低 | file:// 页面上 CSP 的 `'self'` 匹配所有本地文件；子框架可加载本地文件 | 部分修复（记录 28）：禁止子框架与 worker，拦下所有框架导航。页面里注入的 `<script src="file://…">` 仍能加载，根治需改为自定义协议加载渲染页（同时可以关掉 GrantFileProtocolExtraPrivileges fuse）。界面没有 HTML 注入点 |
+| L3 | 低 | 某个段文件读不了（Windows 扫描器占用）时，启动和导出直接失败 | 待办 |
+| L4 | 低 | `run.started` 所在的段被清理后重启，run 丢失名字和「模拟」标记 | 待办 |
+| L5 | 低 | Python 发送器在当前目录被删除时构造函数抛异常 | 待办 |
+| L6 | 低 | Python 发送器不感知 fork：子进程里 emit 返回 True 但不发送 | 待办 |
+| L7 | 低 | 淘汰已结束的 run 时按字符串比较带时区偏移的 `ended_at` | 已修（记录 28） |
+| B1 | 低 | 写出除换行外的整行后失败，下一条事件复用同一个 cursor，重启后时间线只显示其中一条 | 已修（记录 28） |
+| B3 | 低 | 外部程序删除正在写的段文件后，已确认的事件写进被删除的文件 | 已记录（记录 26），可选加固：检查 `nlink` |
+| I1 | 信息 | 不检查 Host 头；有 token 与 Origin 拒绝，DNS rebinding 拿不到 token，不构成漏洞 | 保持 |
+| I2 | 信息 | 没有 `setPermissionCheckHandler`，权限查询报 granted（实际请求已拒绝） | 已修（记录 28） |
+| I3 | 信息 | 段文件 0644、`events/` 0755，依赖数据目录 0700 | 待办 |
+| I4 | 信息 | Python 发送器接受 NaN，接收端之后回 400 | 待办 |
+
+回放后续分支的审计补充：主进程里被保留的事件都脱敏后才过 IPC，略过的旧行不出主进程；检查点与从头计算在 1,200 次随机跳转、多种间隔下 0 差异；`snapshot()` 只复制一层，payload 与事件对象共用，渲染端目前不改它们，测试没覆盖对 payload 的修改。审计未在 Windows 上执行，未运行发布包。

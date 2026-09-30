@@ -227,8 +227,15 @@ export function createMonitorWindow(opts: MonitorWindowOptions): {
     screen.removeListener('display-removed', refit);
     screen.removeListener('display-metrics-changed', refit);
   });
+  // The default File/Edit/View/Window menu took about 20px of the compact bar on Windows (record 30).
+  // removeMenu only affects Windows and Linux window menus; macOS keeps its global app menu.
+  win.removeMenu();
   win.webContents.setWindowOpenHandler(() => ({action: 'deny'}));
   win.webContents.on('will-navigate', event => {
+    event.preventDefault();
+  });
+  // `'self'` on a file:// page matches any local file, so no frame may navigate either. loadFile is not affected.
+  win.webContents.on('will-frame-navigate', event => {
     event.preventDefault();
   });
   const controller: MonitorWindowController = {

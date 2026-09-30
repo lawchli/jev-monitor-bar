@@ -217,3 +217,31 @@ pnpm schema:export
 文件内容是 `JSON.stringify(schema, null, 2)` 再加一个换行。`tests/protocol-artifacts.test.ts` 要求这份文件和代码一致。上一节里「`validateEvent` 另外拒绝」的规则只在代码里，不在这份 JSON Schema 里。换用别的校验器时，那些语义检查要另外做。
 
 固定模拟场景在 `fixtures/scenarios/`。每个 JSONL 是一条 run。`run.started` 的 `payload.simulated` 为 `true`，`name` 以 `模拟：` 开头。时间从 `2026-01-01T00:00:00.000Z` 递增，同一个文件里的 `producer_id` 相同，`sequence` 从 1 递增。`index.json` 的 `expect` 是这些事件写入一个新的 `EventStore` 之后的结果：`run_status` 是 run 的状态记号，`decisions` 把 `decision_id` 映射到判断状态，`attempts` 的键是 `<action_id>/<attempt_id>`。`pause_after_index` 是从 0 起的事件下标，只给需要暂停的场景使用；不暂停时为 `null`。暂停本身由播放这些文件的宿主执行，不编码成文件里的时间空隙。
+
+## 补充（2026-09-30）
+
+写接入文档 [`docs/INTEGRATION.md`](INTEGRATION.md) 时对照代码，并在 macOS 上对真实接收端（`EventStore` + `startServer`，没有启动 Electron）用 curl 核对过。上文不改，下面只追加。
+
+- 鉴权：接收端把 `Authorization` 开头的 `Bearer ` 去掉，再和 token 比较。前缀区分大小写，`bearer <token>` 得到 401。但完全不带前缀、直接给 token 也能通过。发送端仍应按 `Bearer <token>` 发送。
+- 路径用 `req.url` 全等比较：`/health?x=1` 和 `/events/` 都是 404。`Content-Type` 的前缀比较区分大小写，`Application/JSON` 得到 415。
+- `requestTimeout` 的 2 秒由 Node 周期检查（`connectionsCheckingInterval`，默认 30 秒）执行。正文迟迟不发完时，Node 自己回 `408 Request Timeout`（空正文）并断开。本机一次测到约 10.7 秒才回。
+- 时钟（C11）：`occurred_at` 用发送端时钟，`received_at` 用接收端写入时的时钟，两者都保存。跨 producer 的排序只用 `occurred_at` 和 `event_id`，不用 `received_at`，所以接收先后不能纠正发送端之间的时钟偏差。
+- 残行与 cursor（C6）：完全无法 `JSON.parse` 的尾行不抬高高水位。如果这行原来占用了某个 cursor，重启后这个 cursor 可能分给新事件。写入用 `appendFileSync`，返回后才确认，但没有调用 fsync。
+- `diagnostic`：桌面主进程用 `new EventStore(paths.eventsDir)` 构造，诊断模式为关，也没有开关。所以当前 `diagnostic` 入库时总是被删掉。
+
+## 更正（2026-09-30，接收端修复后）
+
+上面「补充」里有两条记的是修复前的行为，原文保留，这里更正：
+
+- 鉴权：接收端现在只接受 `Authorization: Bearer <token>`。不带 `Bearer ` 前缀、直接给 token 也得到 401，与本文开头「版本与传输」一致。
+- 超时：`http.createServer` 设了 `connectionsCheckingInterval: 500`。正文没发完的请求在 `requestTimeout` 的 2 秒后，大约 2–2.5 秒内得到 408；修复前约 10.7 秒，最坏 30 秒。
+
+## 更正（2026-09-30，段文件常开）
+
+C10 改动之后，上文「会话文件与数据目录」和「补充」里关于写入与清理的描述更正如下，原文保留：
+
+- 写入：每个段只 `openSync(段文件, 'a')` 一次，之后每条事件用 `writeSync` 把整行写完才确认。「落盘后才确认」仍指交给操作系统，没有 fsync。段文件在第一条写入时才创建，所以启动后没有事件就不会多出空段。
+- 写入失败：关闭当前段，返回 503，不确认，cursor 不前进；下一条事件重新打开再写。如果失败前已经写出这一行的一部分，下一条换到新段，残行留在旧段，重启时计入 `corruptLines`，不会和下一条拼成一行。
+- 轮转与保留：换段条件、每次启动新开一段、只保留最近 8 段都不变。旧段只在启动时和每个新段写入第一行之后清理，不再每条事件列一次目录。删除遇到文件占用（`ENOENT` 以外的错误）时，至少 1 秒后的下一条写入再列目录重试。
+- 关闭：桌面退出时先关接收端，再关当前段。
+- 当前段打开期间如果被其他程序删除或移走，之后的行会写进已经不在目录里的文件，直到下一次换段；改动前每条事件都按路径重新打开。

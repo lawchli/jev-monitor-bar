@@ -12,11 +12,14 @@ export function TimelineTab({
   runId,
   bridge,
   retryKeys,
+  eventCount,
 }: {
   events: StoredEvent[];
   runId?: string;
   bridge: MonitorBridge;
   retryKeys?: ReadonlySet<string>;
+  /** Events received for the run so far. Snapshots carry only the newest rows, so this counts arrivals while paused. */
+  eventCount?: number;
 }) {
   const [filter, setFilter] = useState<TimelineFilter>('all');
   const [older, setOlder] = useState<StoredEvent[]>([]);
@@ -24,6 +27,7 @@ export function TimelineTab({
   const [following, setFollowing] = useState(true);
   const [pinnedEnd, setPinnedEnd] = useState<number | null>(null);
   const [pausedAt, setPausedAt] = useState(0);
+  const [pausedCount, setPausedCount] = useState(0);
   const [selected, setSelected] = useState<number>();
   const [loading, setLoading] = useState(false);
   const [olderEnd, setOlderEnd] = useState<OlderEnd>('unknown');
@@ -37,7 +41,9 @@ export function TimelineTab({
   const visibleEndRef = useRef<number | undefined>(undefined);
   const filteredStartRef = useRef<number | undefined>(undefined);
   const filteredEndRef = useRef<number | undefined>(undefined);
+  const eventCountRef = useRef(eventCount);
   runIdRef.current = runId;
+  eventCountRef.current = eventCount;
 
   useEffect(() => {
     epochRef.current += 1;
@@ -70,7 +76,10 @@ export function TimelineTab({
   visibleEndRef.current = visible.at(-1)?.cursor;
   filteredStartRef.current = filtered[0]?.cursor;
   filteredEndRef.current = filtered.at(-1)?.cursor;
-  const newCount = allItems.filter(item => item.cursor > pausedAt).length;
+  const newCount =
+    eventCount !== undefined
+      ? Math.max(0, eventCount - pausedCount)
+      : allItems.filter(item => item.cursor > pausedAt).length;
   const selectedItem =
     visible.find(item => item.cursor === selected) ?? allItems.find(item => item.cursor === selected);
   const atLoadedStart = visible.length > 0 && filtered[0]?.cursor === visible[0].cursor;
@@ -101,9 +110,23 @@ export function TimelineTab({
     if (followingRef.current) {
       followingRef.current = false;
       setPausedAt(newestRef.current);
+      setPausedCount(eventCountRef.current ?? 0);
       setFollowing(false);
     }
     setPinnedEnd(anchor);
+  }
+
+  function followLatest() {
+    followingRef.current = true;
+    setFollowing(true);
+    setPinnedEnd(null);
+    // Rows kept for reading history stop where the snapshot has moved on. Following shows only the snapshot,
+    // so the tail never skips the events in between. An in-flight older page belongs to the history view.
+    epochRef.current += 1;
+    setLoading(false);
+    setOlder([]);
+    setHeld([]);
+    setOlderEnd('unknown');
   }
 
   function onScroll() {
@@ -112,11 +135,7 @@ export function TimelineTab({
     const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight <= 8;
     if (atBottom) {
       const tail = filteredEndRef.current === undefined || visibleEndRef.current === filteredEndRef.current;
-      if (tail && !followingRef.current) {
-        followingRef.current = true;
-        setFollowing(true);
-        setPinnedEnd(null);
-      }
+      if (tail && !followingRef.current) followLatest();
       return;
     }
     const anchor = visibleEndRef.current;
@@ -124,10 +143,9 @@ export function TimelineTab({
   }
 
   function resume() {
-    followingRef.current = true;
-    setFollowing(true);
-    setPinnedEnd(null);
+    followLatest();
     setPausedAt(newestRef.current);
+    setPausedCount(eventCountRef.current ?? 0);
     const list = listRef.current;
     if (list) list.scrollTop = list.scrollHeight;
   }

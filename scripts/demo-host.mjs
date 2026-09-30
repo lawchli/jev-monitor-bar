@@ -93,7 +93,7 @@ async function postEvent(sessionRef, body) {
       );
       if (response.status === 200) {
         await response.body?.cancel();
-        return;
+        return true;
       }
       const text = await response.text();
       if (response.status === 401) {
@@ -104,7 +104,10 @@ async function postEvent(sessionRef, body) {
         continue;
       }
       console.error(`event rejected ${response.status}: ${text}`);
-      process.exit(1);
+      // Not process.exit(1): right after a fetch, Node 24 on Windows can abort in libuv (0xC0000409) instead of
+      // exiting with 1. Set the code and let the loop end.
+      process.exitCode = 1;
+      return false;
     } catch {
       const next = readSession();
       if (next) sessionRef.current = next;
@@ -139,7 +142,7 @@ if (only) {
 const sessionRef = {current: await waitReady()};
 let generation = 0;
 
-do {
+outer: do {
   for (const scenario of scenarios) {
     generation += 1;
     const producerId = `demo-host-${process.pid}-${randomBytes(4).toString('hex')}`;
@@ -151,7 +154,7 @@ do {
     for (let index = 0; index < lines.length; index += 1) {
       if (index > 0) await sleep(fast ? 0 : scenario.delay_ms);
       const event = rewrite(JSON.parse(lines[index]), runId, producerId, index + 1, new Date().toISOString());
-      await postEvent(sessionRef, JSON.stringify(event));
+      if (!(await postEvent(sessionRef, JSON.stringify(event)))) break outer;
       if (scenario.pause_after_index === index) await sleep(fast ? 0 : (scenario.pause_ms ?? 0));
     }
   }

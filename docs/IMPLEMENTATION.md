@@ -737,3 +737,42 @@
 - 内容：仓库所有者同意替换记录 18 留下的占位值。`scripts/package-config.mjs`：CompanyName 为 `lawchli`，LegalCopyright 为 `Copyright (C) 2026 lawchli`，新增 `BUNDLE_ID = io.github.lawchli.jev-monitor-bar` 并作为 macOS 的 `appBundleId`（原来是 packager 默认的 `com.electron.jev-monitor-bar`）。ProductName、FileDescription 仍是「JEV Monitor Bar」。`pnpm package:verify` 在 macOS 包上新增 `bundle identifier` 一项；`tests/package-config.test.ts` 断言新的署名与 bundle id。
 - 验证：macOS arm64：`tests/package-config.test.ts` 12 项通过；重新 `pnpm package`（win32-x64）与 `pnpm package --platform darwin --arch arm64`，核对全部 ok；用 resedit 读回 exe：CompanyName `lawchli`、LegalCopyright `Copyright (C) 2026 lawchli`、ProductName `JEV Monitor Bar`、FileVersion 0.1.0.0；`Info.plist` 的 CFBundleIdentifier 为 `io.github.lawchli.jev-monitor-bar`，codesign 校验通过；`pnpm package:runtime` 在 darwin 包上 4 项通过。
 - 遗留：无。
+
+## 26 — C10：段文件常开、只在换段时清理，droppedRuns 有界
+
+- 日期：2026-09-30
+- harness：claude-code
+- model：claude-opus
+- 提交：`446c734`（分支 `claude/c10-store-writes`，起点 `c6681e5`），合并 `0bb132d`
+- 内容：
+  - `src/store.ts`：每个段在第一次写入时 `openSync(…, 'a')` 一次，之后每条事件 `writeSync` 循环写完整行才确认，仍不 fsync。换段（4 MiB 条件不变）、写入出错、`close()` 时关闭当前段。写入出错时抛出原错误，接收端照旧回 503、不确认、cursor 不前进，下一条重新打开；如果已写出半行，下一条换新段，残行留在旧段，重启时计入 `corruptLines`。每次启动新开一段、保留 8 段、CRLF 读取、残行恢复不变。
+  - 旧段只在启动时和新段写入第一行后清理；删除失败（ENOENT 以外）至少 1 秒后的下一次写入再试；列目录失败不再让已写入的事件变成 503。
+  - `droppedRuns` 最多 200 个（与 run 上限同一常量 `MAX_RUNS`）。事件移出窗口时把 run 移到最新一端；超出时先去掉已不在 run 列表里、最早移出窗口的 run，仍在列表里的 run 保留标记，时间线「更早的事件已超出保留窗口」与「没有更早的事件」的区分不变。
+  - 新增 `EventStore.close()`；`src/main/index.ts` 在接收端关闭后关闭当前段。
+  - 新增 `tests/store-writes.test.ts`（8 项，在旧 `store.ts` 上全部失败）；已有测试未改。负载脚本同时计时 `appendFileSync`、`writeSync`、`openSync`。`docs/PROTOCOL.md` 追加「更正（2026-09-30，段文件常开）」，`docs/AUDIT.md` 追加 C10 说明。
+- 验证：macOS 27 arm64（Apple M2 8 GB，Node 22.23.2），机器上同时有其他 agent，负载 3–20。
+  - 分支上：`pnpm format:check`、`pnpm typecheck`、`pnpm test`（173 项）、`pnpm build` 通过；`pnpm smoke` 32 项通过。
+  - 隔离基准（20,000 条 403 B 行）：ingest p50 48–55 µs → 11.6–12.5 µs，总耗时 1.16–2.08 s → 0.34–0.47 s，readdirSync 20,002 → 4 次。
+  - `pnpm loadtest --duration 3m --rate 25 --runtime node --no-probe`，基线 3 次与分支 2 次交替，各 4,500 条有效事件，失败 0：单次落盘 p50 0.18–0.24 ms → 0.04–0.07 ms，落盘总耗时 1.7–4.1 s → 0.46–1.24 s，readdirSync 4,504 → 6 次，ingest p50 0.40–0.53 ms → 0.14–0.29 ms。
+  - 与记录 27 合并后见记录 27 的验证。
+  - 未在 Windows、Linux 与杀软环境执行；未跑 30 分钟负载。
+- 遗留：写入仍同步，分支第二轮出现一次 518 ms 的 writeSync 卡顿，文件系统卡顿仍会停住主进程；仍不 fsync；当前段打开期间被外部删除时，写入会进入已删除的文件直到下次换段；run 被移出列表后又收到新事件时，它的 droppedRuns 标记可能已被去掉，时间线会写「没有更早的事件」。
+
+## 27 — 回放保留最近的事件，拖动从检查点接着算（A9）
+
+- 日期：2026-09-30
+- harness：claude-code
+- model：claude-opus
+- 提交：`0932f9a`（分支 `claude/replay-window`，起点 `c6681e5`），合并 `ee128be`，以及本条所在提交
+- 内容：
+  - `parseReplay` 从文件末尾往前读，超过 20000 条时保留最近的有效事件（原先保留最早的）。更早的行照样校验，计入无效行或新的 `omitted`（略过数），不脱敏也不保留；50 MiB 上限、逐行校验与脱敏、缺 cursor 用行号不变。
+  - 回放横幅「已截断，只保留前 20000 条」改为「只保留最近 N 条，已略过更早的 M 条」。`ReplayData` 增加可选的 `omitted`。
+  - 新增 `ReplayTimeline`：去重、cursor、焦点和每个 run 的事件下标一次算好；每 1000 条存一个聚合状态检查点，跳到第 p 条最多在最近检查点上再应用 999 条，往后一步只应用一条。检查点里的 run 不再改动，之后第一次改到才复制一层；没变的决策/尝试与上一个检查点共用，事件和 payload 始终共用。检查点最多 21 个，事件更多时加大间隔。`ReplayView` 改用它；`replaySnapshot` 保留为从头计算的对照。
+  - 新增 `tests/replay-timeline.test.ts`（10 项）：带种子的混合事件流（260 个 run、重复、乱序、关联冲突、超过 500 个决策）在随机位置、检查点边界、每次淘汰前后、连续播放与倒退、越界 count 上与 `replaySnapshot` 逐项 deepStrictEqual；A7 的 201 个 run；事件不被改动；导出再回放与实时内存窗口的事件集合一致。10 种故意改坏的实现有 9 种被测出，剩下一种在只追加、只删最早键的表里不会出现。
+  - 新增 `pnpm bench:replay`（不进 `pnpm test`）；loadtest 报告同时记从头重算与检查点耗时和略过数。
+  - 导出未改：保留段是内存窗口的超集，回放取最近 20000 条后通常与内存窗口相同。平均事件大于约 1.4 KB、窗口外重发的重复事件、以及窗口前开始的 run 的聚合状态仍有差异。回放打开的 IPC 未改（26.66 MB，其中 payload 20.3 MB）；要再降需要按需读取详情。
+- 验证：
+  - 分支上（macOS 27 arm64，M2 8 GB，Node 22.23.2，另一个 agent 同时运行）：`pnpm test`（176 项）等通过；`pnpm smoke` 32 项通过（含 replay.matchesLive）。`pnpm bench:replay`，3 分钟负载导出的最后 20,000 / 23,000 行，前后对比（ms，中位数）：跳到 50% 21.0 → 0.08，100% 70.8 → 0.06，检查点后 999 条 25.8 → 5.1，前进一条 21.3 → 0.49，后退一条 20.9 → 3.6，随机 200 次 p95 66.5 → 4.6；首次全量 83.7 → 92.9；检查点常驻 2.8 MB。23,000 行文件改为保留最近 20,000 条、略过 3,000。极端合成（42 万个表格键）检查点约 27 MB，首次全量 112 → 263 ms。
+  - 与记录 26 合并后（`claude/m5-followups`）在本机重跑：`pnpm format:check`、`pnpm typecheck`、`pnpm test`（184 项）、`pnpm build` 通过；Python 3.9、3.13 unittest 通过；`pnpm smoke --native` 37/37，可见延迟 p95 92 ms；`pnpm loadtest --duration 60s --rate 25 --runtime node --no-probe` 1,500 条失败 0，writeSync 1,501 次、openSync 2 次、readdirSync 5 次，回放跳到一半 0.53 ms；`pnpm package --platform darwin --arch arm64` 核对全部 ok，`pnpm package:runtime` 4 项通过。
+  - 只在 macOS 上测量；未测 Windows、Linux。
+- 遗留：后退一步最多重放 999 条；极端情形首次全量变慢；`state.ts` 的 `bound()` 每条决策/尝试事件都做一次 `Object.keys`，大表时每条约 40 µs，实时存储同样受影响；IPC 未减小；回放聚合状态不含窗口之前的事件。

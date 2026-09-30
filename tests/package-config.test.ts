@@ -12,6 +12,9 @@ type FuseEnum = Record<string, number | string>;
 interface PackageConfig {
   APP_ID: string;
   PRODUCT_NAME: string;
+  COMPANY_NAME: string;
+  COPYRIGHT: string;
+  BUNDLE_ID: string;
   SUPPORTED_TARGETS: readonly string[];
   FUSE_SETTINGS: Readonly<Record<string, boolean>>;
   SIGNING_ENV: readonly string[];
@@ -143,6 +146,13 @@ test('packager options ship a prebuilt asar app without a manifest rewrite', asy
   assert.ok(!('executableName' in mac));
   assert.ok(!('buildVersion' in mac));
   assert.ok(!('win32metadata' in mac));
+  assert.equal(mac.appBundleId, 'io.github.lawchli.jev-monitor-bar');
+  assert.ok(!('appBundleId' in win));
+  // 仓库所有者确认的署名，不再是占位值。
+  assert.equal(config.COMPANY_NAME, 'lawchli');
+  assert.equal(config.COPYRIGHT, 'Copyright (C) 2026 lawchli');
+  assert.equal(win.win32metadata.CompanyName, 'lawchli');
+  assert.equal(win.appCopyright, 'Copyright (C) 2026 lawchli');
   const linux = config.packagerOptions({...input, platform: 'linux', arch: 'x64', checksums: undefined});
   assert.equal(linux.executableName, 'jev-monitor-bar');
   assert.deepEqual(linux.download, {});

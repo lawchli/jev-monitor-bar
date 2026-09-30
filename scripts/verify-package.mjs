@@ -11,6 +11,7 @@ import {FuseV1Options, getCurrentFuseWire} from '@electron/fuses';
 import plist from 'plist';
 import {NtExecutable, NtExecutableResource, Resource} from 'resedit';
 import {
+  BUNDLE_ID,
   asarProblems,
   fuseMismatches,
   manifestExecutionLevel,
@@ -167,6 +168,11 @@ export async function verifyPackage({repoRoot, platform, arch, hostPlatform = pr
           ? [`recorded ${record.algorithm}:${record.hash}, header hashes to SHA256:${headerHash}`]
           : [],
       `SHA256 ${headerHash.slice(0, 12)}…`,
+    );
+    check(
+      'bundle identifier',
+      infoPlist.CFBundleIdentifier === BUNDLE_ID ? [] : [`CFBundleIdentifier is ${infoPlist.CFBundleIdentifier}`],
+      BUNDLE_ID,
     );
     if (hostPlatform === 'darwin') {
       // macOS：codesign 只在 macOS 主机上可用；这里是打包后的检查，不是应用运行时。

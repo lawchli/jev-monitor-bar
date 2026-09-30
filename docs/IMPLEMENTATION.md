@@ -727,3 +727,13 @@
 - 内容：CI 运行 [36632809142](https://github.com/lawchli/jev-monitor-bar/actions/runs/36632809142) 全部成功。`package-windows` 作业在 Windows Server 2025 runner 上打包后跑 `pnpm package:runtime`（记录 22）：`ELECTRON_RUN_AS_NODE` 不生效、`NODE_OPTIONS` 不生效、`--inspect` 不生效、改动 `app.asar` 的副本退出码 1 拒绝启动，4 项通过。随后 `pnpm smoke --native --app release/jev-monitor-bar-win32-x64/jev-monitor-bar.exe` 通过。
 - 验证：结论来自该运行的作业日志。这是 Windows Server runner，不是 Windows 10/11 桌面；没有 SmartScreen（CI 里下载的包没有网络来源标记）、没有 Defender 扫描。
 - 遗留：Windows 10/11 实机（SmartScreen、无 UAC、Defender、干净机器解压即用、混合 DPI）。
+
+## 25 — 发布包署名改为仓库所有者确认的值
+
+- 日期：2026-09-30
+- harness：claude-code
+- model：claude-opus
+- 提交：本条所在提交
+- 内容：仓库所有者同意替换记录 18 留下的占位值。`scripts/package-config.mjs`：CompanyName 为 `lawchli`，LegalCopyright 为 `Copyright (C) 2026 lawchli`，新增 `BUNDLE_ID = io.github.lawchli.jev-monitor-bar` 并作为 macOS 的 `appBundleId`（原来是 packager 默认的 `com.electron.jev-monitor-bar`）。ProductName、FileDescription 仍是「JEV Monitor Bar」。`pnpm package:verify` 在 macOS 包上新增 `bundle identifier` 一项；`tests/package-config.test.ts` 断言新的署名与 bundle id。
+- 验证：macOS arm64：`tests/package-config.test.ts` 12 项通过；重新 `pnpm package`（win32-x64）与 `pnpm package --platform darwin --arch arm64`，核对全部 ok；用 resedit 读回 exe：CompanyName `lawchli`、LegalCopyright `Copyright (C) 2026 lawchli`、ProductName `JEV Monitor Bar`、FileVersion 0.1.0.0；`Info.plist` 的 CFBundleIdentifier 为 `io.github.lawchli.jev-monitor-bar`，codesign 校验通过；`pnpm package:runtime` 在 darwin 包上 4 项通过。
+- 遗留：无。

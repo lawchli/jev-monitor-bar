@@ -3,9 +3,11 @@
 
 export const APP_ID = 'jev-monitor-bar';
 export const PRODUCT_NAME = 'JEV Monitor Bar';
-// CompanyName 与 LegalCopyright 由仓库所有者决定；不填时 Electron 原有的 GitHub, Inc. 字样会留在 exe 里。
-export const COMPANY_NAME = 'JEV Monitor Bar';
-export const COPYRIGHT = 'Copyright (C) JEV Monitor Bar contributors';
+// CompanyName、LegalCopyright 与 macOS bundle id 由仓库所有者确认（2026-09-30）：项目没有公司，用 GitHub 账号名。
+// 不填 CompanyName 时 Electron 原有的 GitHub, Inc. 字样会留在 exe 里。
+export const COMPANY_NAME = 'lawchli';
+export const COPYRIGHT = 'Copyright (C) 2026 lawchli';
+export const BUNDLE_ID = 'io.github.lawchli.jev-monitor-bar';
 
 export const SUPPORTED_TARGETS = Object.freeze([
   'win32-x64',
@@ -118,6 +120,8 @@ export function packagerOptions({appDir, outDir, tmpDir, platform, arch, electro
   };
   // Windows / Linux 的可执行文件名不带空格；macOS 保持产品名（见 releaseNames）。
   if (platform !== 'darwin') options.executableName = APP_ID;
+  // 不设时 packager 用 com.electron.<name>。
+  if (platform === 'darwin') options.appBundleId = BUNDLE_ID;
   if (platform === 'win32') {
     const strings = win32VersionStrings(version);
     options.buildVersion = fileVersion;

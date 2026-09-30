@@ -72,6 +72,8 @@ export interface ReplayData {
   events: StoredEvent[];
   invalidLines: number;
   truncated: boolean;
+  /** 超过条数上限时，只保留最近的事件；这里是略过的更早有效事件数。 */
+  omitted?: number;
 }
 
 export interface MonitorBridge {

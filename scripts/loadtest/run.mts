@@ -661,7 +661,8 @@ const replayed = await receiver.call<any>(
 );
 log(
   `回放：解析 ${fmt(replayed.parseMs)} ms，${replayed.events} 条，IPC ${fmt(replayed.ipcBytes / 1048576, 2)} MB / ` +
-    `${fmt(replayed.serializeMs)} ms，replaySnapshot 全量 ${fmt(replayed.replaySnapshotFullMs)} ms`,
+    `${fmt(replayed.serializeMs)} ms，replaySnapshot 全量 ${fmt(replayed.replaySnapshotFullMs)} ms，` +
+    `ReplayTimeline 首次 ${fmt(replayed.timelineFirstMs)} ms / 跳到一半 ${fmt(replayed.timelineMidMs, 2)} ms`,
 );
 const afterEnd = await takeSample(receiver, mainHome, {gc: true, phase: 'after-export'});
 await receiver.call('exit');
@@ -918,8 +919,8 @@ function markdown(r: typeof report) {
     r.exportDuringLoad
       ? `- 负载进行中导出（第 ${fmt(r.exportDuringLoad.atS / 60)} 分钟）：${fmt(r.exportDuringLoad.ms)} ms，${fmt(r.exportDuringLoad.bytes / 1048576, 2)} MB；导出期间及之后 0.5 s 内完成的有效请求 ${r.exportDuringLoad.httpDuring?.count ?? 0} 个，HTTP ${r.exportDuringLoad.httpDuring ? ms(r.exportDuringLoad.httpDuring) : '未测'}`
       : '- 负载进行中导出：未测',
-    `- 回放打开：读取+解析 ${fmt(r.replay.parseMs)} ms，${r.replay.events} 条（截断 ${r.replay.truncated}，无效行 ${r.replay.invalidLines}）；IPC 一次返回 ${fmt(r.replay.ipcBytes / 1048576, 2)} MB，序列化 ${fmt(r.replay.serializeMs)} ms`,
-    `- 回放拖动（渲染端，每步从头重算）：replaySnapshot 全量 ${fmt(r.replay.replaySnapshotFullMs)} ms，一半 ${fmt(r.replay.replaySnapshotMidMs)} ms；pageReplay ${fmt(r.replay.replayPageMs, 2)} ms`,
+    `- 回放打开：读取+解析 ${fmt(r.replay.parseMs)} ms，${r.replay.events} 条（截断 ${r.replay.truncated}，略过更早的 ${r.replay.omitted} 条，无效行 ${r.replay.invalidLines}）；IPC 一次返回 ${fmt(r.replay.ipcBytes / 1048576, 2)} MB，序列化 ${fmt(r.replay.serializeMs)} ms`,
+    `- 回放拖动（渲染端）：从头重算 replaySnapshot 全量 ${fmt(r.replay.replaySnapshotFullMs)} ms，一半 ${fmt(r.replay.replaySnapshotMidMs)} ms；检查点 ReplayTimeline 首次全量 ${fmt(r.replay.timelineFirstMs)} ms，跳到一半 ${fmt(r.replay.timelineMidMs, 2)} ms，再前进一条 ${fmt(r.replay.timelineStepMs, 2)} ms；pageReplay ${fmt(r.replay.replayPageMs, 2)} ms`,
     r.recovery
       ? `- 重启恢复（新进程读保留段）：${fmt(r.recovery.ms)} ms，${r.recovery.events} 条，${fmt(r.recovery.bytes / 1048576, 2)} MB，损坏行 ${r.recovery.corruptLines}；GC 后 RSS ${fmt(r.recovery.afterGc.rssMB)} MB，heap ${fmt(r.recovery.afterGc.heapUsedMB)} MB`
       : '- 重启恢复：未测',

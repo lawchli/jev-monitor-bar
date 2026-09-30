@@ -806,3 +806,17 @@
   - Defender：`RealTimeProtectionEnabled` 为 False，病毒库版本为空，Defender 扫描没有做。
 - 验证：以上数字来自 Windows 会话回报的命令输出。
 - 遗留：需要用户在本机登录或用远程桌面连进会话 1 后，再做置顶、不抢焦点、200% 缩放清晰度、拖动与位置恢复和截图；Defender 需要用户自己开启并更新病毒库后再扫描；干净机器（无 Node/Python）解压即用未做；记录 26 的写盘改动还要在 Windows 上重测负载。
+
+## 30 — Windows 11 实机窗口观察（会话断开时能做的部分），去掉 Windows/Linux 窗口菜单
+
+- 日期：2026-09-30
+- harness：claude-code（Windows 上的会话负责观察，本会话负责修复与记录）
+- model：claude-opus
+- 提交：本条所在提交
+- 内容：
+  - Windows 会话在 LANCE-GAMEPC 上用发布包 `jev-monitor-bar.exe`（`JEV_MONITOR_HOME=.runtime\manual`，另起 `demo-host.mjs` 持续发事件）做了阶段 C。用户会话是断开状态，所以改用 PrintWindow 逐窗口截图，用 UI Automation 读内容、点按钮，用 EnumWindows 的 Z 序加 WS_EX_TOPMOST 判断置顶。窗口 DPI 是 96（100%）。
+  - 通过：紧凑条持续更新（「在线」→「27 秒无新事件」→「可能断开 · 最后更新 …」）；展开后三个页签正常（Choice 概率 0.86 / 0.14、分布集中度、模型标识；执行；时间线的筛选与加载更早），展开高度 640 被工作区 605 截短；和记事本重叠时监视窗口在上；置顶开关关闭后记事本能盖住它，打开后又回到上面，`window-state.json` 的 pinned 随之变化；用 SetWindowPos 移动和改变大小后，退出重启位置和大小恢复为 (200,150,520,180)；只有主进程有 TCP，监听 127.0.0.1，没有 UDP，也没有针对这个 exe 的防火墙规则；关闭后 216 ms 内全部进程退出并删掉 `session.json`，重启后 demo-host 自动重连。
+  - 发现：发布包窗口显示 Electron 默认菜单栏「File Edit View Window」，占掉紧凑条约 20px 高度。`src/main/window.ts` 创建窗口后调用 `win.removeMenu()`：只影响 Windows 和 Linux 的窗口菜单，macOS 的全局应用菜单不变。400px 宽时状态、运行名和展开视图的运行选择框会截断，这些元素都有 `title`，悬停可看全文，展开视图也有完整内容，暂不改动。
+  - 未验证：启动时不抢焦点（断开的会话里没有前台窗口）、200% 缩放下的清晰度（当前会话实际是 96 DPI）、用鼠标拖动（SendInput 在断开的会话里无效）、两窗口叠在一起的整屏截图。
+- 验证：Windows 上的结论来自该会话回报的命令与 UI Automation 输出。本机（macOS arm64）：`pnpm format:check`、`pnpm typecheck` 通过，`pnpm smoke --native` 37/37，可见延迟 p95 94 ms。Windows 上去掉菜单栏的效果待复测。
+- 遗留：同记录 29；去菜单栏后在 Windows 上复测；用户在本机登录后补做不抢焦点、200% 清晰度和整屏截图。

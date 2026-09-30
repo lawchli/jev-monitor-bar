@@ -519,6 +519,8 @@ const samples: any[] = [];
 const rawAll = {
   ingest: [] as number[],
   append: [] as number[],
+  write: [] as number[],
+  open: [] as number[],
   readdir: [] as number[],
   snapshotBuild: [] as number[],
   snapshotSerialize: [] as number[],
@@ -770,6 +772,9 @@ const perMinute = (series: {t: number; v: number}[]) =>
 const saturated = loadSamples.find(
   s => s.receiver.store.events >= 20000 || s.receiver.store.bytes >= 32 * 1024 * 1024 * 0.97,
 );
+const total = (values: readonly number[]) => values.reduce((a, b) => a + b, 0);
+const shareOfIngest = (values: readonly number[]) =>
+  rawAll.ingest.length > 0 ? Math.round((total(values) / total(rawAll.ingest)) * 1000) / 1000 : 0;
 const worst = (pick: (s: any) => number) => loadSamples.reduce((m, s) => Math.max(m, pick(s) || 0), 0);
 const summary = {
   loadSeconds: Math.round(loadMs / 100) / 10,
@@ -790,11 +795,11 @@ const summary = {
   receiver: {
     ingestMs: summarize(rawAll.ingest),
     appendFileSyncMs: summarize(rawAll.append),
-    appendShareOfIngest:
-      rawAll.ingest.length > 0
-        ? Math.round((rawAll.append.reduce((a, b) => a + b, 0) / rawAll.ingest.reduce((a, b) => a + b, 0)) * 1000) /
-          1000
-        : 0,
+    appendShareOfIngest: shareOfIngest(rawAll.append),
+    writeSyncMs: summarize(rawAll.write),
+    openSyncMs: summarize(rawAll.open),
+    // 落盘三种调用合计占 ingest 的比例；旧写法只有 appendFileSync，新写法是 openSync + writeSync。
+    diskWriteShareOfIngest: shareOfIngest([...rawAll.append, ...rawAll.write, ...rawAll.open]),
     readdirSyncMs: summarize(rawAll.readdir),
     readdirCalls: rawAll.readdir.length,
     snapshotBuildMs: summarize(rawAll.snapshotBuild),
@@ -883,7 +888,8 @@ function markdown(r: typeof report) {
     `- 生成器：${s.generator.runsStarted} 个 run；类型 ${JSON.stringify(s.generator.byType)}`,
     `- HTTP 往返（有效事件）：${ms(s.httpLatencyMs)}；最差窗口 p99 ${fmt(s.worstWindowHttpP99Ms, 2)} ms；超过 500 ms（Python 发送端默认超时）${s.over500ms} 次，超过 2 s ${s.over2000ms} 次；被拒请求 ${ms(s.rejectLatencyMs)}；排程滞后 ${ms(s.scheduleLagMs)}`,
     `- 接收端 ingest（校验+脱敏+落盘+聚合）：${ms(rc.ingestMs)}`,
-    `- appendFileSync：${ms(rc.appendFileSyncMs)}，占 ingest 时间 ${fmt(rc.appendShareOfIngest * 100)}%；readdirSync ${rc.readdirCalls} 次，${ms(rc.readdirSyncMs)}`,
+    `- 落盘：appendFileSync ${rc.appendFileSyncMs.count} 次，${ms(rc.appendFileSyncMs)}；writeSync ${rc.writeSyncMs.count} 次，${ms(rc.writeSyncMs)}；openSync ${rc.openSyncMs.count} 次；三者共占 ingest 时间 ${fmt(rc.diskWriteShareOfIngest * 100)}%`,
+    `- readdirSync ${rc.readdirCalls} 次，${ms(rc.readdirSyncMs)}`,
     `- 快照（每次更新，v8.serialize 近似 IPC）：构建 ${ms(rc.snapshotBuildMs)}；序列化 ${ms(rc.snapshotSerializeMs)}；大小 ${kb(rc.snapshotV8Bytes)}；共 ${rc.snapshotsTaken} 次`,
     `- 主进程侧更新延迟（入库到快照序列化完成，含 50 ms 合并与 100 ms 节流）：${ms(rc.updateLatencyMs)}`,
     `- 分页（加载更早）：${ms(rc.pageMs)}`,

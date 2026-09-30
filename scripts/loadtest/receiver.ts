@@ -90,6 +90,8 @@ let follow = option('--follow') ?? 'auto';
 const bucket = () => ({
   ingest: [] as number[],
   append: [] as number[],
+  write: [] as number[],
+  open: [] as number[],
   readdir: [] as number[],
   snapshotBuild: [] as number[],
   snapshotSerialize: [] as number[],
@@ -113,7 +115,11 @@ function timeFs(name: string, sink: (ms: number) => void) {
     }
   };
 }
+// 旧写法每条事件一次 appendFileSync；常开 fd 的写法是 openSync（每段一次）加 writeSync。两种都记，前后对比用同一套字段。
+// 启动时写会话文件（writeFileSync 带 mode）也经过 openSync + writeSync，所以这两项各多 1 次。
 timeFs('appendFileSync', ms => win.append.push(ms));
+timeFs('writeSync', ms => win.write.push(ms));
+timeFs('openSync', ms => win.open.push(ms));
 timeFs('readdirSync', ms => win.readdir.push(ms));
 
 const eventsDir = path.join(home, 'events');
@@ -423,6 +429,8 @@ async function handle(raw: unknown, close: () => Promise<void>) {
       if (flushTimer) clearTimeout(flushTimer);
       if (delayTimer) clearTimeout(delayTimer);
       await close();
+      // 与 src/main/index.ts 一致：接收端关掉之后再关当前段。
+      store.close();
       reply({closed: true});
       process.disconnect?.();
       process.exit(0);

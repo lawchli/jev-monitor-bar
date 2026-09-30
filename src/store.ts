@@ -5,6 +5,10 @@ import {validateEvent, type MonitorEvent, type StoredEvent} from './protocol';
 import {sanitizeEvent} from './redact';
 import {applyEvent, emptyRun, selectRunToEvict, type RunState} from './state';
 
+const MAX_RUNS = 200;
+// A segment that could not be deleted (Windows antivirus, indexers) is tried again no sooner than this.
+const PRUNE_RETRY_MS = 1000;
+
 export class EventStore extends EventEmitter {
   events: StoredEvent[] = [];
   runs = new Map<string, RunState>();
@@ -15,6 +19,9 @@ export class EventStore extends EventEmitter {
   corruptLines = 0;
   private segment = 0;
   private segmentBytes = 0;
+  private fd: number | undefined;
+  private prunePending = false;
+  private pruneRetryAt: number | undefined;
   private droppedRuns = new Set<string>();
   constructor(
     public directory: string,
@@ -55,7 +62,7 @@ export class EventStore extends EventEmitter {
       }
     }
     // A fresh segment after every restart isolates torn writes from valid records.
-    this.segment++;
+    this.rotate();
     this.pruneFiles();
   }
   private files() {
@@ -67,13 +74,68 @@ export class EventStore extends EventEmitter {
   private file() {
     return path.join(this.directory, `events-${String(this.segment).padStart(8, '0')}.jsonl`);
   }
+  private rotate() {
+    this.closeSegment();
+    this.segment++;
+    this.segmentBytes = 0;
+    // The new file appears with its first line; pruning after that write leaves exactly maxSegments files.
+    this.prunePending = true;
+  }
+  private closeSegment() {
+    const fd = this.fd;
+    if (fd === undefined) return;
+    this.fd = undefined;
+    try {
+      fs.closeSync(fd);
+    } catch {
+      // Every acknowledged line was already handed to the OS; a failed close loses nothing.
+    }
+  }
+  /** Releases the open segment. A later ingest reopens it, so closing twice or writing after close is safe. */
+  close() {
+    this.closeSegment();
+  }
+  private append(data: Buffer) {
+    if (this.segmentBytes + data.length > this.segmentLimit) this.rotate();
+    // One descriptor per segment: opening and closing the file for every event cost about half of ingest.
+    const fd = (this.fd ??= fs.openSync(this.file(), 'a'));
+    let written = 0;
+    try {
+      while (written < data.length) {
+        const n = fs.writeSync(fd, data, written, data.length - written);
+        if (n <= 0) throw Object.assign(new Error('Segment write made no progress'), {code: 'EIO'});
+        written += n;
+      }
+    } catch (error) {
+      // Reopen on the next ingest, so a transient error (antivirus, a full disk being cleared) does not wedge the store.
+      this.closeSegment();
+      // Part of a line on disk would glue onto the next record; start a fresh segment, as after a restart.
+      if (written > 0) this.rotate();
+      throw error;
+    }
+    this.segmentBytes += data.length;
+    if (this.prunePending || (this.pruneRetryAt !== undefined && Date.now() >= this.pruneRetryAt)) {
+      this.prunePending = false;
+      this.pruneFiles();
+    }
+  }
   private pruneFiles() {
-    const files = this.files();
+    this.pruneRetryAt = undefined;
+    let files: string[];
+    try {
+      files = this.files();
+    } catch {
+      // The event is already written; listing old segments can wait for the next retry.
+      this.pruneRetryAt = Date.now() + PRUNE_RETRY_MS;
+      return;
+    }
     for (const f of files.slice(0, Math.max(0, files.length - this.maxSegments))) {
-      // Windows antivirus/indexers can briefly lock old segments; the event is already on disk, so retry on a later prune.
+      // Windows antivirus/indexers can briefly lock old segments; the event is already on disk, so retry a little later.
       try {
         fs.unlinkSync(path.join(this.directory, f));
-      } catch {}
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') this.pruneRetryAt = Date.now() + PRUNE_RETRY_MS;
+      }
     }
   }
   private seq(e: MonitorEvent) {
@@ -82,6 +144,17 @@ export class EventStore extends EventEmitter {
   private evictRun() {
     const victim = selectRunToEvict(this.runs.values());
     if (victim) this.runs.delete(victim.id);
+  }
+  private markDropped(runId: string) {
+    // Re-adding moves the run to the newest end, so trimming starts with runs whose events aged out longest ago.
+    this.droppedRuns.delete(runId);
+    this.droppedRuns.add(runId);
+    if (this.droppedRuns.size <= MAX_RUNS) return;
+    for (const id of this.droppedRuns) {
+      if (this.droppedRuns.size <= MAX_RUNS) break;
+      // A run the UI still lists keeps its mark, so its timeline can still say older events were dropped.
+      if (!this.runs.has(id)) this.droppedRuns.delete(id);
+    }
   }
   private remember(e: StoredEvent) {
     if (this.ids.has(e.event_id) || this.sequences.has(this.seq(e))) return;
@@ -95,13 +168,13 @@ export class EventStore extends EventEmitter {
       this.runs.set(e.run_id, r);
     }
     applyEvent(r, e);
-    while (this.runs.size > 200) this.evictRun();
+    while (this.runs.size > MAX_RUNS) this.evictRun();
     while (this.events.length > this.maxEvents || this.bytes > 32 * 1024 * 1024) {
       const old = this.events.shift()!;
       this.ids.delete(old.event_id);
       this.sequences.delete(this.seq(old));
       this.bytes -= Buffer.byteLength(JSON.stringify(old));
-      this.droppedRuns.add(old.run_id);
+      this.markDropped(old.run_id);
     }
   }
   ingest(raw: unknown) {
@@ -114,16 +187,8 @@ export class EventStore extends EventEmitter {
       received_at: new Date().toISOString(),
       cursor: this.cursor + 1,
     };
-    const line = JSON.stringify(e) + '\n';
-    const size = Buffer.byteLength(line);
-    if (this.segmentBytes + size > this.segmentLimit) {
-      this.segment++;
-      this.segmentBytes = 0;
-    }
-    // Commit on disk before acknowledgement; append failure never becomes a successful send.
-    fs.appendFileSync(this.file(), line);
-    this.segmentBytes += size;
-    this.pruneFiles();
+    // Commit on disk before acknowledgement; a failed write never becomes a successful send.
+    this.append(Buffer.from(JSON.stringify(e) + '\n'));
     this.cursor = e.cursor;
     this.remember(e);
     this.emit('event', e);

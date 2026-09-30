@@ -51,9 +51,11 @@ if (!app.requestSingleInstanceLock()) {
       storageError = error instanceof Error ? error.message : String(error);
     }
     if (store) {
+      const opened = store;
       try {
         const started = await startServer(store, paths.sessionFile);
-        closeServer = started.close;
+        // The segment is closed after the server stops, so no request writes behind it.
+        closeServer = () => started.close().finally(() => opened.close());
         listening = true;
         url = started.session.url;
       } catch (error) {

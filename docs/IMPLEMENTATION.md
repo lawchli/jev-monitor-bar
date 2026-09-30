@@ -13,7 +13,7 @@
 | M2 | Electron 主进程、平台模块、preload、Windows 置顶小窗 | 集成分支已有主进程、平台模块、preload 与窗口位置恢复（记录 08）。原生 Windows 窗口未验证 |
 | M3 | 紧凑/展开 UI、详情、时间线、断线提示、导出与回放 | 集成分支已有紧凑条、展开视图、导出与回放（记录 08） |
 | M4 | Python 发送器、示例宿主、`pnpm demo` | 集成分支已有 Python 发送器、示例宿主与 `pnpm demo`（记录 08） |
-| M5 | 接入文档、延迟与负载测试、Windows 实机验证与打包；macOS/Linux 适配 | 进行中：接入文档（记录 16）、目录 zip 打包与读回核对（记录 18、22）、桌面冒烟测试与可见延迟（macOS 与 Windows Server runner，记录 19、20、24）、30 分钟合成负载（macOS，记录 23）已完成。Windows 10/11 实机验证、Defender 扫描、干净机器解压即用未完成 |
+| M5 | 接入文档、延迟与负载测试、Windows 实机验证与打包；macOS/Linux 适配 | 进行中：接入文档（记录 16）、目录 zip 打包与读回核对（记录 18、22）、桌面冒烟测试与可见延迟（macOS 与 Windows Server runner，记录 19、20、24）、30 分钟合成负载（macOS，记录 23）、写盘与回放后续（记录 26、27）、合并前审计（记录 28）已完成；Windows 11 实机上自动检查、打包与发布包启动已通过（记录 29）。Windows 真实桌面观察、Defender 扫描、干净机器解压即用未完成 |
 
 ## 记录模板
 
@@ -776,3 +776,33 @@
   - 与记录 26 合并后（`claude/m5-followups`）在本机重跑：`pnpm format:check`、`pnpm typecheck`、`pnpm test`（184 项）、`pnpm build` 通过；Python 3.9、3.13 unittest 通过；`pnpm smoke --native` 37/37，可见延迟 p95 92 ms；`pnpm loadtest --duration 60s --rate 25 --runtime node --no-probe` 1,500 条失败 0，writeSync 1,501 次、openSync 2 次、readdirSync 5 次，回放跳到一半 0.53 ms；`pnpm package --platform darwin --arch arm64` 核对全部 ok，`pnpm package:runtime` 4 项通过。
   - 只在 macOS 上测量；未测 Windows、Linux。
 - 遗留：后退一步最多重放 999 条；极端情形首次全量变慢；`state.ts` 的 `bound()` 每条决策/尝试事件都做一次 `Object.keys`，大表时每条约 40 µs，实时存储同样受影响；IPC 未减小；回放聚合状态不含窗口之前的事件。
+
+## 28 — 合并前审计与修复
+
+- 日期：2026-09-30
+- harness：claude-code
+- model：claude-opus
+- 提交：`015996c`，以及本条所在提交
+- 内容：
+  - 由一个只读 agent 审计 PR #14 + #15 的集成结果和记录 26、27 的两个分支，结论与完整问题表追加到 `docs/AUDIT.md`「2026-09-30 合并前审计」。没有严重或高危问题。
+  - 修掉 M1（脱敏后按码点截回 4096，重启与导出不再丢已确认的事件）、B1（写出部分内容后烧掉 cursor）、L1（401/403 带 `Connection: close`）、L2（CSP 加 `frame-src 'none'`、`worker-src 'none'`，拦下所有 `will-frame-navigate`）、I2（`setPermissionCheckHandler` 返回 false）、L7（按时间点比较 `ended_at`）。
+  - 新增回归测试：`tests/core.test.ts` 的超长脱敏重启导出、拒绝后断开连接、带时区的淘汰顺序；`tests/store-writes.test.ts` 的整行未写换行时 cursor 不重复，原有半行测试的期望 cursor 随之改为 3。
+  - M2、M3、L3–L6、I3、I4 列为合并后的后续项。
+- 验证：macOS 27 arm64，`claude/m5-followups`：去掉修复时 M1、B1 的三个测试失败，恢复后通过；`pnpm format:check`、`pnpm typecheck`、`pnpm test`（188 项）、`pnpm build` 通过；`pnpm smoke --native` 37/37，可见延迟 p95 93 ms。用审计留下的 Electron 探针对新构建复测：`navigator.permissions.query({name:'geolocation'})` 从 granted 变为 denied；iframe 加载 `file:///etc/hosts` 被拦下（只剩 `chrome-error://`）；页面里注入的 `<script src="file://…">` 仍能加载（见 AUDIT 的 L2）。
+- 遗留：见 `docs/AUDIT.md` 该节的「待办」。
+
+## 29 — Windows 11 实机第一次运行（LANCE-GAMEPC）
+
+- 日期：2026-09-30
+- harness：claude-code（Windows 上的 Claude Code 会话，经 Remote Control 由本会话派发）
+- model：claude-opus（本条由集成会话记录；Windows 会话的模型系列以它自己的提交为准）
+- 提交：`5e29c78`（demo-host 修复），以及本条所在提交
+- 内容：
+  - 机器：Windows 11 IoT 企业版 LTSC 10.0.26100，i5-12400（12 线程）、31.7 GB，Node 24.19.0（winget 安装），pnpm 11.19.0（用户范围安装），git 2.52，Python 3.12.10。仓库原来停在 Initial commit，`git fetch` 后切到 `claude/m5-integration@4841493`；`core.autocrlf=true`，但 `.gitattributes` 生效，工作区全是 LF。
+  - `pnpm test` 165 项里 2 项失败：demo-host 在 fetch 刚完成时 `process.exit(1)`，Node 24 在 Windows 上 libuv 断言失败，以 0xC0000409 崩溃（3/3 复现）。Windows 会话对照了几种改法，确认改为 `process.exitCode = 1` 并结束循环后 3/3 退出码 1。`5e29c78` 按这个改。
+  - 其余检查全部通过：`format:check`、`typecheck`、`build`；Python 3.12 unittest 21 项；`pnpm smoke --native` 36 通过、1 跳过（没有可比较的重叠窗口），可见延迟 p50 84 ms、p95 92 ms；`pnpm package` 与 `package:verify` 全部 ok（exe 版本资源、asInvoker、asar 完整性、zip 与 SHA-256）；`package:runtime` 4 项通过；发布包 `pnpm smoke --native --app …\jev-monitor-bar.exe` 22 通过、9 跳过，p95 92 ms。
+  - `pnpm loadtest --duration 5m --rate 25 --runtime node --no-probe`（记录 26 之前的写盘方式）：7,500 条有效事件失败 0，HTTP p95 1.86 ms，4 次超过 500 ms；appendFileSync p50 0.38 ms、占 ingest 74.2%，最长 789 ms 的磁盘写入停顿；主进程更新延迟 p95 99.7 ms；导出 170 ms、重启恢复 204 ms。
+  - 阶段 C（真实桌面观察）受阻：用户会话 1 处于断开状态（`query session` 为 Disc，SM_REMOTESESSION=1，`OpenInputDesktop` 与 `GetForegroundWindow` 返回 0，`CopyFromScreen` 抛「句柄无效」）。所以 smoke 的「不抢焦点」在这台机器上是空验证（前台为 Idle），截屏做不了，注册表 200% 缩放没有生效（Electron 读到 scaleFactor 1，1300×653 的占位显示）。
+  - Defender：`RealTimeProtectionEnabled` 为 False，病毒库版本为空，Defender 扫描没有做。
+- 验证：以上数字来自 Windows 会话回报的命令输出。
+- 遗留：需要用户在本机登录或用远程桌面连进会话 1 后，再做置顶、不抢焦点、200% 缩放清晰度、拖动与位置恢复和截图；Defender 需要用户自己开启并更新病毒库后再扫描；干净机器（无 Node/Python）解压即用未做；记录 26 的写盘改动还要在 Windows 上重测负载。

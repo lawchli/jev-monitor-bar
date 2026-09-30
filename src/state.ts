@@ -65,6 +65,11 @@ export function emptyRun(id: string): RunState {
   };
 }
 // Finished runs leave first, earliest ended_at first. Otherwise the earliest last_received leaves. Equal times keep the earlier run.
+// ended_at comes from the producer and may carry any offset, so compare instants, not strings.
+const instant = (value: string | undefined) => {
+  const time = value === undefined ? NaN : Date.parse(value);
+  return Number.isFinite(time) ? time : -Infinity;
+};
 export function selectRunToEvict<T extends {id: string; ended_at?: string; last_received?: string}>(
   runs: Iterable<T>,
 ): T | undefined {
@@ -73,7 +78,7 @@ export function selectRunToEvict<T extends {id: string; ended_at?: string; last_
   for (const run of runs) {
     const received = run.last_received ?? '';
     if (!oldest || received < (oldest.last_received ?? '')) oldest = run;
-    if (run.ended_at !== undefined && (!ended || run.ended_at < (ended.ended_at ?? ''))) ended = run;
+    if (run.ended_at !== undefined && (!ended || instant(run.ended_at) < instant(ended.ended_at))) ended = run;
   }
   return ended ?? oldest;
 }

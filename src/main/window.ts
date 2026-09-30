@@ -231,6 +231,10 @@ export function createMonitorWindow(opts: MonitorWindowOptions): {
   win.webContents.on('will-navigate', event => {
     event.preventDefault();
   });
+  // `'self'` on a file:// page matches any local file, so no frame may navigate either. loadFile is not affected.
+  win.webContents.on('will-frame-navigate', event => {
+    event.preventDefault();
+  });
   const controller: MonitorWindowController = {
     getMode: () => mode,
     setMode(next) {

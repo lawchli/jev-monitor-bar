@@ -121,7 +121,8 @@ test('a partly written line is left in its own segment, and restart keeps every 
     throw busy('ENOSPC');
   }, at + 1);
   assert.throws(() => store.ingest(event()), {code: 'ENOSPC'});
-  assert.deepEqual(store.ingest(event()), {accepted: true, cursor: 2});
+  // The failed event's cursor is burned, because part of its line is on disk.
+  assert.deepEqual(store.ingest(event()), {accepted: true, cursor: 3});
   const files = segments(dir);
   assert.equal(files.length, 2);
   assert.doesNotMatch(fs.readFileSync(path.join(dir, files[0]), 'utf8'), /\n$/);
@@ -129,7 +130,34 @@ test('a partly written line is left in its own segment, and restart keeps every 
   assert.equal(restored.corruptLines, 1);
   assert.deepEqual(
     restored.events.map(e => e.cursor),
-    [1, 2],
+    [1, 3],
+  );
+});
+
+test('a line written except its newline does not share a cursor with the next event after restart', t => {
+  const dir = tempDir();
+  const store = new EventStore(dir);
+  store.ingest(event());
+  const real = fs.writeSync;
+  const write = t.mock.method(fs, 'writeSync');
+  const at = write.mock.callCount();
+  // Everything but the trailing newline lands, then the write fails.
+  const allButNewline = (fd: number, data: NodeJS.ArrayBufferView, offset?: number | null, length?: number | null) =>
+    real(fd, data, offset, (length ?? 1) - 1);
+  write.mock.mockImplementationOnce(allButNewline as typeof fs.writeSync, at);
+  write.mock.mockImplementationOnce(() => {
+    throw busy('EIO');
+  }, at + 1);
+  const lost = event();
+  assert.throws(() => store.ingest(lost), {code: 'EIO'});
+  const next = event();
+  assert.deepEqual(store.ingest(next), {accepted: true, cursor: 3});
+  const restored = new EventStore(dir);
+  const cursors = restored.events.map(e => e.cursor);
+  assert.equal(new Set(cursors).size, cursors.length);
+  assert.deepEqual(
+    restored.events.map(e => e.event_id),
+    ['w' + (n - 2), lost.event_id, next.event_id],
   );
 });
 

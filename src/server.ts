@@ -12,8 +12,13 @@ export async function startServer(store: EventStore, sessionFile: string, port =
       res.writeHead(status);
       res.end(JSON.stringify(body));
     };
+    // Rejected clients do not keep a connection: 32 idle keep-alive sockets would lock the real sender out.
+    const reject = (status: number, body: object) => {
+      res.setHeader('Connection', 'close');
+      respond(status, body);
+    };
     if (req.headers.origin || !['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress ?? '')) {
-      respond(403, {error: 'Origin rejected'});
+      reject(403, {error: 'Origin rejected'});
       return;
     }
     // The `Bearer ` prefix is required; a bare token is rejected like a wrong one.
@@ -21,7 +26,7 @@ export async function startServer(store: EventStore, sessionFile: string, port =
     const provided = Buffer.from(header.startsWith('Bearer ') ? header.slice('Bearer '.length) : '');
     const expected = Buffer.from(token);
     if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) {
-      respond(401, {error: 'Local session credential required'});
+      reject(401, {error: 'Local session credential required'});
       return;
     }
     if (req.method === 'GET' && req.url === '/health') {

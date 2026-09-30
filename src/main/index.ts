@@ -65,6 +65,8 @@ if (!app.requestSingleInstanceLock()) {
     session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
       callback(false);
     });
+    // Without this, navigator.permissions.query reports some permissions as granted.
+    session.defaultSession.setPermissionCheckHandler(() => false);
     const created = createMonitorWindow({
       preload: path.join(__dirname, 'preload.cjs'),
       stateFile: paths.windowStateFile,

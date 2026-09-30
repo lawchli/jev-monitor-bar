@@ -95,7 +95,7 @@ export class EventStore extends EventEmitter {
   close() {
     this.closeSegment();
   }
-  private append(data: Buffer) {
+  private append(data: Buffer, cursor: number) {
     if (this.segmentBytes + data.length > this.segmentLimit) this.rotate();
     // One descriptor per segment: opening and closing the file for every event cost about half of ingest.
     const fd = (this.fd ??= fs.openSync(this.file(), 'a'));
@@ -110,7 +110,12 @@ export class EventStore extends EventEmitter {
       // Reopen on the next ingest, so a transient error (antivirus, a full disk being cleared) does not wedge the store.
       this.closeSegment();
       // Part of a line on disk would glue onto the next record; start a fresh segment, as after a restart.
-      if (written > 0) this.rotate();
+      if (written > 0) {
+        this.rotate();
+        // All but the newline may have landed, and recovery would load that line with this cursor. Burn it so the
+        // next event does not reuse the number (the timeline keys rows by cursor).
+        this.cursor = cursor;
+      }
       throw error;
     }
     this.segmentBytes += data.length;
@@ -188,7 +193,7 @@ export class EventStore extends EventEmitter {
       cursor: this.cursor + 1,
     };
     // Commit on disk before acknowledgement; a failed write never becomes a successful send.
-    this.append(Buffer.from(JSON.stringify(e) + '\n'));
+    this.append(Buffer.from(JSON.stringify(e) + '\n'), e.cursor);
     this.cursor = e.cursor;
     this.remember(e);
     this.emit('event', e);

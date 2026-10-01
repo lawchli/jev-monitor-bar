@@ -98,3 +98,53 @@ test('eviction drops the earliest run when every run is still running', () => {
   assert.equal(store.runs.has('run-oldest'), false);
   assert.equal(store.runs.has('run-mid-201'), true);
 });
+
+function live(cursor: number, runId: string, type: string, at: string, payload: Record<string, unknown> = {}) {
+  return {
+    schema_version: 1,
+    event_id: `e${cursor}`,
+    run_id: runId,
+    producer_id: `${runId}-p`,
+    sequence: cursor,
+    occurred_at: at,
+    type,
+    payload,
+  };
+}
+
+test('a heartbeat for an evicted finished run does not bring it back as an unnamed run that never ends', () => {
+  const store = new EventStore(tempDir());
+  store.ingest(live(1, 'run-done', 'run.started', '2026-01-01T00:00:00.000Z', {name: '已完成', simulated: true}));
+  store.ingest(live(2, 'run-done', 'run.completed', '2026-01-01T00:00:01.000Z'));
+  for (let i = 1; i <= 200; i++) store.ingest(live(2 + i, `run-live-${i}`, 'run.started', '2026-01-01T00:00:02.000Z'));
+  assert.equal(store.runs.has('run-done'), false);
+  // The host left its sender open after run.completed, so heartbeats keep coming.
+  for (let i = 0; i < 5; i++) {
+    store.ingest(live(300 + i, 'run-done', 'heartbeat', '2026-01-01T00:01:00.000Z'));
+    assert.equal(store.runs.size, 200);
+    assert.equal(store.runs.has('run-done'), false, 'the finished run is evicted again, first in line');
+    assert.equal(store.runs.has('run-live-1'), true, 'no running run is pushed out in its place');
+  }
+  // The events themselves are kept: on disk, in the window and in an export.
+  assert.equal(store.events.filter(e => e.run_id === 'run-done').length, 7);
+});
+
+test('a run evicted while running comes back with its name and simulated flag', () => {
+  const store = new EventStore(tempDir());
+  store.ingest(live(1, 'run-old', 'run.started', '2026-01-01T00:00:00.000Z', {name: '最早的任务', simulated: true}));
+  for (let i = 1; i <= 200; i++) store.ingest(live(1 + i, `run-${i}`, 'run.started', '2026-01-01T00:00:02.000Z'));
+  assert.equal(store.runs.has('run-old'), false);
+  store.ingest({
+    ...live(500, 'run-old', 'decision.started', '2026-01-01T00:01:00.000Z', {kind: 'choice', question: '下一步？'}),
+    decision_id: 'd1',
+    request_id: 'r1',
+    question_id: 'next',
+  });
+  const run = store.runs.get('run-old');
+  assert.ok(run);
+  assert.equal(run.name, '最早的任务');
+  assert.equal(run.simulated, true);
+  assert.equal(run.started_at, '2026-01-01T00:00:00.000Z');
+  assert.equal(run.status, 'evaluating');
+  assert.equal(store.runs.size, 200);
+});

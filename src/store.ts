@@ -3,9 +3,8 @@ import path from 'node:path';
 import {EventEmitter} from 'node:events';
 import {validateEvent, type MonitorEvent, type StoredEvent} from './protocol';
 import {sanitizeEvent} from './redact';
-import {applyEvent, emptyRun, selectRunToEvict, type RunState} from './state';
+import {applyEvent, evictRuns, MAX_RUNS, restoreRun, type EvictedRun, type RunState} from './state';
 
-const MAX_RUNS = 200;
 // A segment that could not be deleted (Windows antivirus, indexers) is tried again no sooner than this.
 const PRUNE_RETRY_MS = 1000;
 
@@ -23,6 +22,7 @@ export class EventStore extends EventEmitter {
   private prunePending = false;
   private pruneRetryAt: number | undefined;
   private droppedRuns = new Set<string>();
+  private evictedRuns = new Map<string, EvictedRun>();
   constructor(
     public directory: string,
     public maxEvents = 20000,
@@ -146,10 +146,6 @@ export class EventStore extends EventEmitter {
   private seq(e: MonitorEvent) {
     return JSON.stringify([e.run_id, e.producer_id, e.sequence]);
   }
-  private evictRun() {
-    const victim = selectRunToEvict(this.runs.values());
-    if (victim) this.runs.delete(victim.id);
-  }
   private markDropped(runId: string) {
     // Re-adding moves the run to the newest end, so trimming starts with runs whose events aged out longest ago.
     this.droppedRuns.delete(runId);
@@ -169,11 +165,11 @@ export class EventStore extends EventEmitter {
     this.bytes += Buffer.byteLength(JSON.stringify(e));
     let r = this.runs.get(e.run_id);
     if (!r) {
-      r = emptyRun(e.run_id);
+      r = restoreRun(e.run_id, this.evictedRuns);
       this.runs.set(e.run_id, r);
     }
     applyEvent(r, e);
-    while (this.runs.size > MAX_RUNS) this.evictRun();
+    evictRuns(this.runs, this.evictedRuns);
     while (this.events.length > this.maxEvents || this.bytes > 32 * 1024 * 1024) {
       const old = this.events.shift()!;
       this.ids.delete(old.event_id);

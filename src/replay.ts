@@ -1,7 +1,7 @@
 import type {PageQuery, Snapshot} from './ipc';
 import type {MonitorEvent, StoredEvent} from './protocol';
 import {pickDefaultRun} from './renderer/view-model/common';
-import {applyEvent, emptyRun, selectRunToEvict, type RunState} from './state';
+import {applyEvent, evictRuns, restoreRun, type EvictedRun, type RunState} from './state';
 
 export const REPLAY_EVENT_LIMIT = 20000;
 export const REPLAY_MAX_BYTES = 50 * 1024 * 1024;
@@ -73,6 +73,7 @@ export function parseReplay(text: string, parsers: ReplayParsers, limit = REPLAY
 export function replaySnapshot(events: readonly StoredEvent[], count: number, runId?: string): Snapshot {
   const end = Number.isFinite(count) ? Math.max(0, Math.min(events.length, Math.trunc(count))) : 0;
   const runs = new Map<string, RunState>();
+  const evicted = new Map<string, EvictedRun>();
   const seenIds = new Set<string>();
   const seenSequences = new Set<string>();
   const applied: StoredEvent[] = [];
@@ -85,18 +86,14 @@ export function replaySnapshot(events: readonly StoredEvent[], count: number, ru
     seenSequences.add(key);
     let run = runs.get(event.run_id);
     if (!run) {
-      run = emptyRun(event.run_id);
+      run = restoreRun(event.run_id, evicted);
       runs.set(event.run_id, run);
     }
     applyEvent(run, event);
     applied.push(event);
     if (event.cursor > cursor) cursor = event.cursor;
     if (runId === undefined) focus = event.run_id;
-    while (runs.size > 200) {
-      const victim = selectRunToEvict(runs.values());
-      if (!victim) break;
-      runs.delete(victim.id);
-    }
+    evictRuns(runs, evicted);
   }
   let selected = focus !== undefined ? runs.get(focus) : undefined;
   if (!selected) selected = pickDefaultRun([...runs.values()]);
@@ -170,10 +167,14 @@ export class ReplayTimeline {
   private readonly lastApplied: Int32Array;
   /** 每个 run 被应用的事件下标，升序。 */
   private readonly runEvents = new Map<string, number[]>();
-  private readonly checkpoints: Map<string, RunState>[] = [new Map()];
+  /** 被淘汰 run 的记录也存进检查点；记录对象建好后不再改动，所以只复制 Map。 */
+  private readonly checkpoints: {runs: Map<string, RunState>; evicted: Map<string, EvictedRun>}[] = [
+    {runs: new Map(), evicted: new Map()},
+  ];
   private readonly frozen = new WeakSet<RunState>();
   private readonly origins = new WeakMap<RunState, RunState>();
   private runs = new Map<string, RunState>();
+  private evicted = new Map<string, EvictedRun>();
   private position = 0;
 
   constructor(
@@ -244,7 +245,8 @@ export class ReplayTimeline {
     const baseAt = base * this.interval;
     if (this.position > target || this.position < baseAt) {
       // 往回走，或者目标越过了下一个已有的检查点：从目标之前最近的检查点接着算。
-      this.runs = new Map(this.checkpoints[base]);
+      this.runs = new Map(this.checkpoints[base].runs);
+      this.evicted = new Map(this.checkpoints[base].evicted);
       this.position = baseAt;
     }
     while (this.position < target) this.advance();
@@ -256,7 +258,7 @@ export class ReplayTimeline {
       const event = this.events[index];
       let run = this.runs.get(event.run_id);
       if (!run) {
-        run = emptyRun(event.run_id);
+        run = restoreRun(event.run_id, this.evicted);
         this.runs.set(event.run_id, run);
       } else if (this.frozen.has(run)) {
         const copy = copyRun(run);
@@ -266,12 +268,8 @@ export class ReplayTimeline {
         run = copy;
       }
       applyEvent(run, event);
-      // 与 replaySnapshot、EventStore 一样最多保留 200 个 run。
-      while (this.runs.size > 200) {
-        const victim = selectRunToEvict(this.runs.values());
-        if (!victim) break;
-        this.runs.delete(victim.id);
-      }
+      // 与 replaySnapshot、EventStore 一样最多保留 200 个 run，并记下被淘汰的 run。
+      evictRuns(this.runs, this.evicted);
     }
     this.position = index + 1;
     if (this.position % this.interval === 0 && this.position / this.interval === this.checkpoints.length) this.record();
@@ -288,7 +286,7 @@ export class ReplayTimeline {
       }
       this.frozen.add(run);
     }
-    this.checkpoints.push(new Map(this.runs));
+    this.checkpoints.push({runs: new Map(this.runs), evicted: new Map(this.evicted)});
   }
 }
 

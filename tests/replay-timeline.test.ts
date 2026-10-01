@@ -13,7 +13,7 @@ import {
   parseReplay,
   replaySnapshot,
 } from '../src/replay';
-import {applyEvent, emptyRun, selectRunToEvict, type RunState} from '../src/state';
+import {applyEvent, evictRuns, restoreRun, type EvictedRun, type RunState} from '../src/state';
 import {EventStore} from '../src/store';
 
 // ReplayTimeline 用检查点拖动；这里逐个位置与 replaySnapshot 的从头计算比较。
@@ -132,12 +132,17 @@ function mixedEvents(total: number, runCount: number, seed: number, spawn = 0.08
   return events;
 }
 
-/** 与 replaySnapshot 同样的循环，只记下哪些位置发生了淘汰：第 i 条应用后 run 超过 200。 */
-function evictionPoints(events: readonly StoredEvent[]) {
+/**
+ * 与 replaySnapshot 同样的循环，只记下哪些位置发生了淘汰（第 i 条应用后 run 超过 200），
+ * 以及哪些位置把已淘汰的 run 按记录恢复（revived）。
+ */
+function replayEvictions(events: readonly StoredEvent[]) {
   const runs = new Map<string, RunState>();
+  const evicted = new Map<string, EvictedRun>();
   const ids = new Set<string>();
   const sequences = new Set<string>();
   const points: {index: number; evicted: string; added: string}[] = [];
+  const revived: {index: number; runId: string; ended: boolean}[] = [];
   events.forEach((event, index) => {
     const key = JSON.stringify([event.run_id, event.producer_id, event.sequence]);
     if (ids.has(event.event_id) || sequences.has(key)) return;
@@ -145,19 +150,19 @@ function evictionPoints(events: readonly StoredEvent[]) {
     sequences.add(key);
     let run = runs.get(event.run_id);
     if (!run) {
-      run = emptyRun(event.run_id);
+      const past = evicted.get(event.run_id);
+      if (past) revived.push({index, runId: event.run_id, ended: past.ended_at !== undefined});
+      run = restoreRun(event.run_id, evicted);
       runs.set(event.run_id, run);
     }
     applyEvent(run, event);
-    while (runs.size > 200) {
-      const victim = selectRunToEvict(runs.values());
-      if (!victim) break;
-      runs.delete(victim.id);
-      points.push({index, evicted: victim.id, added: event.run_id});
-    }
+    const before = [...runs.keys()];
+    evictRuns(runs, evicted);
+    for (const id of before) if (!runs.has(id)) points.push({index, evicted: id, added: event.run_id});
   });
-  return points;
+  return {points, revived};
 }
+const evictionPoints = (events: readonly StoredEvent[]) => replayEvictions(events).points;
 
 function same(timeline: ReplayTimeline, events: readonly StoredEvent[], count: number, runId?: string) {
   assert.deepStrictEqual(
@@ -411,4 +416,19 @@ test('more events widen the checkpoint interval instead of adding checkpoints', 
   assert.equal(timeline.interval, REPLAY_CHECKPOINT_INTERVAL * 2 + 1);
   same(timeline, wide, wide.length);
   same(timeline, wide, timeline.interval * 7 + 3, 'run-1');
+});
+
+test('runs brought back after eviction match at every position, and the mixed stream brings back ended runs', () => {
+  const {revived} = replayEvictions(mixed);
+  assert.ok(revived.some(item => item.ended));
+  const events = mixedEvents(600, 230, 3, 0.6);
+  assert.ok(replayEvictions(events).revived.length > 0);
+  for (const interval of [7, 50]) {
+    const timeline = new ReplayTimeline(events, interval);
+    for (let count = 0; count <= events.length; count++) same(timeline, events, count, events[count - 1]?.run_id);
+  }
+  for (const item of revived.slice(0, 10)) {
+    const timeline = new ReplayTimeline(mixed, 250);
+    for (const count of [item.index, item.index + 1, item.index + 2]) same(timeline, mixed, count, item.runId);
+  }
 });

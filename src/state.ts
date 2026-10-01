@@ -82,6 +82,42 @@ export function selectRunToEvict<T extends {id: string; ended_at?: string; last_
   }
   return ended ?? oldest;
 }
+export const MAX_RUNS = 200;
+// A sender left open after run.completed keeps sending heartbeats, so evicted runs are remembered well past MAX_RUNS.
+const MAX_EVICTED = 1000;
+/** What is kept of an evicted run. */
+export type EvictedRun = Pick<RunState, 'name' | 'simulated' | 'status' | 'started_at' | 'ended_at'>;
+/**
+ * A late event for an evicted run brings it back with the name, simulated flag and outcome it had. Rebuilt from
+ * nothing, it would be named by its id and never end, so it would outlive every finished run.
+ */
+export function restoreRun(id: string, evicted: Map<string, EvictedRun>): RunState {
+  const run = emptyRun(id);
+  const past = evicted.get(id);
+  if (!past) return run;
+  evicted.delete(id);
+  run.name = past.name;
+  run.simulated = past.simulated;
+  run.status = past.status;
+  if (past.started_at !== undefined) run.started_at = past.started_at;
+  if (past.ended_at !== undefined) run.ended_at = past.ended_at;
+  return run;
+}
+/** Keeps at most MAX_RUNS runs and remembers the ones that leave, forgetting the longest-evicted first. */
+export function evictRuns(runs: Map<string, RunState>, evicted: Map<string, EvictedRun>) {
+  while (runs.size > MAX_RUNS) {
+    const victim = selectRunToEvict(runs.values());
+    if (!victim) break;
+    runs.delete(victim.id);
+    const {name, simulated, status, started_at, ended_at} = victim;
+    evicted.delete(victim.id);
+    evicted.set(victim.id, {name, simulated, status, started_at, ended_at});
+    for (const id of evicted.keys()) {
+      if (evicted.size <= MAX_EVICTED) break;
+      evicted.delete(id);
+    }
+  }
+}
 export function later(a: StoredEvent, b?: StoredEvent): boolean {
   if (!b) return true;
   if (a.producer_id === b.producer_id) return a.sequence > b.sequence;

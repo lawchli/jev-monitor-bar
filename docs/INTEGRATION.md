@@ -28,6 +28,7 @@
 - `JEV_MONITOR_HOME` 非空时替换数据目录。`JEV_MONITOR_SESSION` 非空时单独指定会话文件。空字符串等于没设。
 - 相对路径接在各自进程的当前目录上。宿主和监视器的当前目录不同，就会找不到对方。跨进程请用绝对路径。
 - Python 的 `jev_monitor.resolve_paths()` 与桌面端用同一套规则，两边共用 `tests/fixtures/paths-cases.json` 里的用例。
+- Python 发送器只需会话路径：构造参数 `session_file` 优先，其次是 `JEV_MONITOR_SESSION`，最后才从数据 home 找 `session.json`。绝对会话覆盖不依赖相对 `JEV_MONITOR_HOME` 或当前目录。当前目录已被删除、只剩无法解析的相对路径时，发送器告警并离线，不把路径错误抛给宿主；完整 `resolve_paths()` 仍可能因相对 home 无法解析而抛错，不伪造一个 home。
 - Windows 与 macOS 的默认目录写在代码里，还没有在这两个系统上实机验收。
 
 从源码运行时，数据目录不是上表的默认值：
@@ -125,6 +126,7 @@ with MonitorSender(host_name='my-host') as sender:
 
 - 一个 `MonitorSender` 对应一个 run。没给 `run_id` 时自动生成 `run-<UTC 时间>-<6 位十六进制>`。
 - `producer_id` 是 `<host_name>-<pid>-<8 位十六进制>`，每个实例都不同。宿主重启后要接着同一个 run，就传同一个 `run_id`；新的 `producer_id` 让序号从 1 重新开始，不会得到 409。
+- POSIX `fork` 后，子进程保留 `run_id`，换新 `producer_id`，序号从 1 起，重建锁、队列与统计；首次 `emit` 才启动子进程发送线程。父进程仍发送父队列，子进程不重发继承的积压。已关闭或 `enabled=False` 的状态保留。Windows 没有 `fork`，这项 Linux/POSIX 验证不是 Windows 原生验收。
 - 值为 `None` 的 payload 字段不发送。
 
 ### 构造参数
@@ -133,10 +135,10 @@ with MonitorSender(host_name='my-host') as sender:
 | --- | --- | --- |
 | `run_id` | 自动生成 | 这次任务的 ID |
 | `host_name` | `'host'` | `producer_id` 的前缀。不合规的字符换成 `-` |
-| `session_file` | `resolve_paths()['session_file']` | 会话文件路径 |
+| `session_file` | 按会话覆盖/数据 home 解析 | 会话文件路径；显式参数优先，跨进程建议绝对路径 |
 | `queue_size` | 1000 | 队列最多几条。必须是 ≥1 的整数，否则 `ValueError` |
-| `timeout` | 0.5 | 单次 HTTP 的超时秒数，必须大于 0 |
-| `heartbeat_interval` | 5.0 | 多少秒没有成功发送就补一条 `heartbeat`，必须大于 0 |
+| `timeout` | 0.5 | 单次 HTTP 的超时秒数，必须是大于 0 的有限数，否则构造时 `ValueError` |
+| `heartbeat_interval` | 5.0 | 多少秒没有成功发送就补一条 `heartbeat`，必须是大于 0 的有限数，否则构造时 `ValueError` |
 | `enabled` | True | False 时所有方法直接返回 True，不启动线程，不计数 |
 
 ### 方法
@@ -156,7 +158,7 @@ with MonitorSender(host_name='my-host') as sender:
 | `stats()` | 返回 `sent`、`dropped`、`conflicts`、`rejected`、`offline` |
 | `close(timeout=2.0)` | 最多等 `timeout` 秒把队列发完。`with` 退出时也会调用 |
 
-发送器自己只检查：事件类型认识、payload 是字典、ID 是字符串、必填 ID 齐全、能编码成 JSON、编码后不超过 65536 字节。其余规则（字段名、取值范围、概率总和、`rule` 必须带 `rule_source` 等）由接收端检查，不合格得到 400，发送器记为 `rejected`。先对着 `pnpm demo` 或测试用的接收端跑一遍，确认 `stats()['rejected']` 为 0。
+发送器自己只检查：事件类型认识、payload 是字典、ID 是字符串、必填 ID 齐全、能编码成标准 JSON（`allow_nan=False`，拒绝 NaN / 正负无穷）、编码后不超过 65536 字节。其余规则（字段名、取值范围、概率总和、`rule` 必须带 `rule_source` 等）由接收端检查，不合格得到 400，发送器记为 `rejected`。先对着 `pnpm demo` 或测试用的接收端跑一遍，确认 `stats()['rejected']` 为 0。
 
 ### 失败隔离
 
@@ -166,7 +168,7 @@ with MonitorSender(host_name='my-host') as sender:
 | --- | --- | --- |
 | 调用 `emit` 或 helper | `put_nowait` 入队，不阻塞，不抛异常 | |
 | 未知类型、payload 不是字典、ID 不是字符串、缺必填 ID | 丢弃，返回 False | `dropped`，不进 `telemetry.dropped` |
-| 无法编码（`set`、循环引用、无法用 UTF-8 表示的字符串），或编码后超过 65536 字节 | 入队前丢弃，返回 False，不占序号。入队时已冻结成 UTF-8 JSON，之后再改 payload 不影响已入队的内容 | `dropped`，不进 `telemetry.dropped` |
+| 无法编码（`set`、循环引用、无法用 UTF-8 表示的字符串、NaN / 正负无穷），或编码后超过 65536 字节 | 入队前丢弃，返回 False，不占序号。入队时已冻结成 UTF-8 JSON，之后再改 payload 不影响已入队的内容 | `dropped`，不进 `telemetry.dropped` |
 | 队列满 | 丢弃，返回 False | `dropped`；恢复连接后先补发一条 `telemetry.dropped` |
 | `close` 之后再调用 | 丢弃，返回 False | `dropped` |
 | 200（包括重复事件的 `accepted:false`） | 算送达 | `sent` |
@@ -361,7 +363,7 @@ sender.emit(
 | 401 | `{"error":"Local session credential required"}` | 没带 token、token 已过期，或缺少区分大小写的 `Bearer ` 前缀 | 重读会话文件。token 变了就用新 token 重发，没变就退避 |
 | 403 | `{"error":"Origin rejected"}` | 带了 `Origin`，或来源不是本机 | 去掉 `Origin`，确认连的是 `127.0.0.1`。这不是临时错误 |
 | 404 | `{"error":"Not found"}` | 方法或路径不对。只有 `GET /health` 和 `POST /events` | 修正路径 |
-| 503 | `{"error":"Storage unavailable"}` | 写盘失败，这条没有保存 | 退避后用同一个 `event_id` 重发 |
+| 503 | `{"error":"Storage unavailable"}` | 写入未确认，或不可读尾段/预留元数据使 cursor 高水位不明；部分写入也可能留下残行 | 退避后用同一个 `event_id` 重发；不把 503 当作已送达 |
 | 408 | 空（Node 内置） | 请求在 `requestTimeout`（2 秒）内没有发完。Node 每 0.5 秒检查一次，所以大约 2–2.5 秒回复 | 退避后重发 |
 | 无响应 | | 连接失败或超时：监视器不在运行，或已换了端口 | 重读会话文件，按离线处理 |
 
@@ -466,12 +468,22 @@ curl -s -X POST "$URL/events" -H "Authorization: Bearer $TOKEN" -H "Content-Type
 - 建议一个 run 只由一个 producer 发送。必须多进程时，用同一台机器的系统时钟，`occurred_at` 用带毫秒的 UTC（Python 发送器就是这样）。不要为了排序去改 `occurred_at`。
 - 去重只在内存窗口内：最近 20000 条，且序列化后合计不超过 32 MiB。窗口外的旧事件重发，可能被再次接受并再次计入状态（审计 C8）。
 
-## 7. cursor 与损坏的尾行
+## 7. cursor、文件锁与有界恢复
 
-- `cursor` 由接收端分配，从 1 开始，每接受一条新事件加 1。宿主不需要读它，界面分页和导出用它。
-- 接收端在 `appendFileSync` 返回之后才回 200。写入没有调用 fsync。
-- 重启恢复时，能 `JSON.parse`、并且 `cursor` 是安全整数的行计入高水位，即使校验失败。完全无法解析的残行（进程或系统在写一行时中断）只计入 `corruptLines`，不抬高 cursor（审计 C6）。如果这样的残行原来占用了某个 cursor，重启后这个 cursor 可能分给新事件。按 cursor 合并多份导出的工具要考虑这一点。
-- 每次重启都新开一个段文件，残行不会和新事件写在同一行。
+- `cursor` 由接收端分配，新目录从 1 起，严格递增但不保证连续。正常接受新事件时加 1；部分写入失败会烧掉编号，恢复时可能跳到安全预留上界。不要把 cursor 当作事件数量，也不要要求分页编号连续。宿主不要自己发送 cursor。
+- 每段只打开一次，`writeSync` 循环写完整 JSONL 行后才确认。没有调用 fsync；确认表示交给操作系统，不保证断电持久性。写出一部分后失败会换新段，残行不会和下一条拼在一起；重发保持原 `event_id` 和 `sequence`。
+- 重启恢复时，可解析 JSON 中的安全整数 cursor 都计入高水位，即使事件校验失败。每个新段首次写入前，接收端原子写 `events/cursor-reservation.json`（v1、少于 1 KiB），预留保守的 cursor 上界，不为每条事件重复写元数据。尾段不可读或最终残行无法解析时，使用该上界避免复用编号，因此可能出现较大空洞。
+- 若尾段高水位未知且预留也读不了或无效，接收端暂缓新写入并返回 503，后续请求会重试恢复，不猜测编号。没有预留文件的旧版日志如果尾行完全不可解析，仍只有可解析行的高水位保证；新实现不能追溯找回已丢的编号。
+- 段读取遇 `EBUSY` / `EPERM` / `EACCES` 先等待 20/40 ms 重试，仍读不了就跳过并报告；后续投递至多每秒补读一次。补读先恢复去重/冲突索引，再判断当前请求，即使请求返回重复或冲突也不能把已确认旧事件再写一份。恢复只改变已保留的数据，不会重新确认旧事件。
+- 每次重启新开一个段；POSIX 上每次写入前还检查当前 fd 的 `nlink`，外部删除后换段，不再持续向已 unlink 的文件确认新行。它不能找回已删除的历史，也不能消除检查和写入之间的外部删除竞争。
+
+### 运行元数据与部分导出
+
+`events/runs.json` 保存 `version:1` 和有界 `runs` 列表；每条有 `id`、`name`、`simulated`，可有 `started_at`，以及已知结束状态的 `status`（仅 `completed` / `failed` / `cancelled`）与 `ended_at`。最多 1200 条、1 MiB，较早记录先被淘汰；旧版只有名称字段的 v1 文件仍可读。轮转清理前用临时文件加重命名保存，使 `run.started` 或结束事件的段被删除后，仍有保留事件的 run 在重启时可恢复名字、模拟标记及已知终态。
+
+启动时元数据读不了，不会把部分名称表覆盖回原文件；解除锁后补读并合并当前 run。连续五次保存失败后仍按事件保留上限清理，并提示重启可能丢失旧信息，避免元数据故障无限推迟轮转。实际段删除锁住时，段数量仍可能暂时超过上限。POSIX 的 `events/` 为 0700，段与元数据为 0600，启动时也尝试收紧旧权限；Windows 依赖用户目录 ACL。
+
+元数据不保存全部判断/执行历史，也不是事件备份。导出只包含可读保留段，经逐行校验和脱敏；`skipped` 是损坏/无效行数，`unreadable` 是读不了的段数，界面分别提示。部分导出不会因单段锁住而完全失败，但不能声称完整。回放只重建这份 JSONL 中的事件，不导入 `runs.json` 或窗口之前的聚合状态。
 
 ## 8. 不接 TypeSafe 也能试
 

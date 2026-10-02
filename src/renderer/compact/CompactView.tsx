@@ -19,12 +19,12 @@ export function CompactView({
 
   return (
     <section className="compact compact-root" data-testid="compact-root" data-empty={model.hasRun ? 'false' : 'true'}>
-      <p className="compact-row">
+      <p className="compact-row compact-heading">
         <span data-testid="compact-status" className={`compact-status compact-fixed tone-${model.runTone}`}>
           <span className="compact-dot" aria-hidden="true" />
           {model.runStatus}
         </span>
-        <span data-testid="compact-run-name" className="compact-grow" title={model.nameFull}>
+        <span data-testid="compact-run-name" className="compact-grow compact-name" title={model.nameFull}>
           {model.name}
         </span>
         {model.simulated ? <span className="compact-badge compact-fixed">模拟数据</span> : null}
@@ -50,19 +50,19 @@ export function CompactView({
         </button>
       </p>
       {model.hasRun ? (
-        <p className="compact-row">
+        <p className="compact-row compact-meta">
           <span className="compact-grow" title={meta}>
             {meta}
           </span>
         </p>
       ) : (
-        <p className="compact-row">
+        <p className="compact-row compact-meta">
           <span className="compact-grow" title={model.receiver}>
             {model.waiting} · {model.receiver}
           </span>
         </p>
       )}
-      <p className="compact-row" hidden={!model.hasRun}>
+      <p className="compact-row compact-outcome" hidden={!model.hasRun}>
         <span data-testid="compact-choice" className="compact-grow" title={model.choice}>
           {model.choice}
         </span>
@@ -79,7 +79,7 @@ export function CompactView({
           {model.execStatus}
         </span>
       </p>
-      <p className="compact-row" hidden={!model.hasRun}>
+      <p className="compact-row compact-recent" hidden={!model.hasRun}>
         <span className="compact-grow" title={eventLine}>
           {eventLine}
         </span>

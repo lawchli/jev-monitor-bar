@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {EventStore} from '../src/store';
-import {readRunNames, RUN_NAMES_FILE, writeRunNames} from '../src/run-names';
+import {EventStore, type RecoveredChange} from '../src/store';
+import {nameRun, readRunNames, RUN_NAMES_FILE, writeRunNames} from '../src/run-names';
 import {MAX_EVICTED, MAX_RUNS, type RunState} from '../src/state';
 
 const tempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'jev-names-'));
@@ -61,6 +61,29 @@ test('saved names are redacted and a retained run.started remains authoritative'
   assert.equal(restored.runs.get('task')?.name, '真实运行');
   assert.equal(restored.runs.get('task')?.simulated, false);
   restored.close();
+});
+
+test('metadata change detection reports terminal-only restoration and ignores authoritative or unchanged fields', () => {
+  const run = {
+    id: 'task',
+    name: '当前名字',
+    simulated: false,
+    started_at: '2026-01-01T00:00:00Z',
+    status: 'waiting',
+    ended_at: undefined as string | undefined,
+  };
+  const names = new Map([['task', {name: '旧名字', simulated: true, started_at: '2025-12-31T23:59:00Z'}]]);
+  assert.equal(nameRun(run, names), false, 'a retained run.started remains authoritative');
+  assert.equal(run.name, '当前名字');
+  assert.equal(run.simulated, false);
+  assert.equal(run.started_at, '2026-01-01T00:00:00Z');
+  const terminal = new Map([['task', {...names.get('task')!, status: 'completed', ended_at: '2026-01-01T00:01:00Z'}]]);
+  assert.equal(nameRun(run, terminal), true);
+  assert.equal(run.name, '当前名字', 'terminal-only recovery does not replace an observed name');
+  assert.equal(run.status, 'completed');
+  assert.equal(run.ended_at, '2026-01-01T00:01:00Z');
+  assert.equal(nameRun(run, terminal), false, 'unchanged metadata does not cause spurious recovery notifications');
+  assert.equal(nameRun(run, new Map()), false);
 });
 
 test('missing, malformed, oversized and partly invalid metadata do not prevent recovery', () => {
@@ -227,6 +250,65 @@ test('permanently locked name reads never overwrite the original metadata and re
   assert.equal(store.runs.get('old')?.simulated, true);
   store.close();
 });
+
+for (const conflict of [false, true]) {
+  test(`metadata-only recovery notifies after a ${conflict ? 'sequence conflict' : 'duplicate'} without a new event`, t => {
+    const dir = tempDir();
+    const first = new EventStore(dir, undefined, 600, 2);
+    const start = event('done', 'run.started', {name: '模拟：恢复后的终态', simulated: true});
+    first.ingest(start);
+    const terminal = event('done', 'run.completed');
+    first.ingest(terminal);
+    let last = event('done', 'heartbeat');
+    for (let i = 0; i < 15; i++) {
+      last = event('done', 'heartbeat');
+      first.ingest(last);
+    }
+    first.close();
+    const exported = first.exportLines().text;
+    assert.ok(!exported.includes('run.started') && !exported.includes('run.completed'));
+    const file = path.join(dir, RUN_NAMES_FILE);
+    const real = fs.readFileSync;
+    const read = t.mock.method(fs, 'readFileSync', ((name: fs.PathOrFileDescriptor, options?: unknown) => {
+      if (String(name) === file) throw Object.assign(new Error('scanner holds metadata'), {code: 'EBUSY'});
+      return real(name, options as BufferEncoding);
+    }) as typeof fs.readFileSync);
+    let now = 1_000_000;
+    t.mock.method(Date, 'now', () => now);
+    const store = new EventStore(dir, undefined, 600, 2);
+    assert.deepEqual(store.unreadableSegments, [], 'only metadata is locked, not the event window');
+    assert.equal(store.runs.get('done')?.name, 'done');
+    assert.equal(store.runs.get('done')?.status, 'waiting');
+    const beforeCursor = store.cursor;
+    const beforeEvents = store.events.map(row => row.event_id);
+    const beforeSegments = segments(dir);
+    const changes: RecoveredChange[] = [];
+    let newEvents = 0;
+    store.on('recovered', (change: RecoveredChange) => changes.push(change));
+    store.on('event', () => newEvents++);
+    read.mock.restore();
+    now += 1500;
+    const retry = conflict ? {...last, event_id: `${last.event_id}-conflict`} : last;
+    const expected = {accepted: false, ...(conflict ? {conflict: true} : {}), cursor: beforeCursor};
+    assert.deepEqual(store.ingest(retry), expected);
+    assert.deepEqual(changes, [{cursor: beforeCursor, runIds: ['done']}]);
+    assert.equal(newEvents, 0);
+    assert.equal(store.runs.get('done')?.name, '模拟：恢复后的终态');
+    assert.equal(store.runs.get('done')?.simulated, true);
+    assert.equal(store.runs.get('done')?.started_at, start.occurred_at);
+    assert.equal(store.runs.get('done')?.status, 'completed');
+    assert.equal(store.runs.get('done')?.ended_at, terminal.occurred_at);
+    assert.equal(store.storageError, undefined);
+    assert.deepEqual(
+      store.events.map(row => row.event_id),
+      beforeEvents,
+    );
+    assert.deepEqual(segments(dir), beforeSegments);
+    assert.deepEqual(store.ingest(retry), expected);
+    assert.equal(changes.length, 1, 'unchanged metadata does not trigger another notification');
+    store.close();
+  });
+}
 
 for (const type of ['run.completed', 'run.failed', 'run.cancelled']) {
   test(`${type} persists across pruning, restart and late decision events`, () => {

@@ -583,6 +583,9 @@ function retryKeys(events: readonly StoredEvent[]): Set<string> {
   const ordered = [...events].sort((left, right) => left.cursor - right.cursor);
   for (const event of ordered) {
     if (!event.action_id || !event.attempt_id) continue;
+    if (event.type === 'action.selected' && (event.payload.retry ?? 0) > 0) {
+      keys.add(attemptKey(event.action_id, event.attempt_id));
+    }
     const seen = first.get(event.action_id);
     if (!seen) {
       first.set(event.action_id, event.attempt_id);
@@ -627,7 +630,8 @@ export function timelineItems(
   filter: TimelineFilter,
   retryKeysFromRun?: ReadonlySet<string>,
 ): TimelineItemModel[] {
-  const retries = filter === 'errors' ? (retryKeysFromRun ?? retryKeys(events)) : undefined;
+  // Run aggregates are bounded independently of loaded history. Hints supplement, never erase, loaded retry evidence.
+  const retries = filter === 'errors' ? new Set([...retryKeys(events), ...(retryKeysFromRun ?? [])]) : undefined;
   return [...events]
     .filter(event => !retries || isErrorOrRetry(event, retries))
     .sort((left, right) => left.cursor - right.cursor)

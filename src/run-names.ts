@@ -142,13 +142,14 @@ export function writeRunNames(file: string, runs: Iterable<[string, RunName]>): 
   }
 }
 
-/** A run rebuilt without its run.started takes the saved name. A later run.started still renames it as usual. */
+/** Restores missing start metadata and newer terminal outcomes; returns whether the run visibly changed. */
 export function nameRun(
   run: Pick<RunState, 'id' | 'name' | 'simulated' | 'started_at' | 'status' | 'ended_at'>,
   names: ReadonlyMap<string, RunName>,
-) {
+): boolean {
   const saved = names.get(run.id);
-  if (!saved) return;
+  if (!saved) return false;
+  const before = [run.name, run.simulated, run.started_at, run.status, run.ended_at];
   if (run.started_at === undefined) {
     run.name = saved.name;
     run.simulated = saved.simulated;
@@ -158,4 +159,7 @@ export function nameRun(
     run.ended_at = saved.ended_at;
     run.status = saved.status!;
   }
+  return [run.name, run.simulated, run.started_at, run.status, run.ended_at].some(
+    (value, index) => value !== before[index],
+  );
 }

@@ -62,3 +62,7 @@ S5 在 S1 修复后的组合场景中发现：同 S1 的锁解除后重试，增
 S1–S4 修复后的同一独立探针已重跑：重复请求返回 accepted:false 且磁盘仍一行；新 event_id 同 sequence 返回 conflict:true 且未写入；名称文件解除读取锁后合并保存旧/新两个任务，下一次重启旧任务仍标模拟；终态段被清后重启仍为 completed 并保留原 ended_at；写锁解除后成功保存清掉旧告警。九项故障与有界检查也全部重跑通过。
 
 S5 已反馈集成与实现 agent，待恢复通知实现后的独立复审。当前仍不把锁解除后的 UI 自动恢复标为完成。
+
+## 2026-10-03 集成方追加更正
+
+上段是初审时状态，原文保留。S5 已由独立 `recovered` 事件及 main 共用批次订阅修复；后续独立审计实际运行八项真实 store/main 组合，包括 duplicate、conflict、metadata-only、部分恢复后仍 EBUSY 和纯 cursor 恢复通知，均通过。订阅回归 5/5，存储无 socket 定向回归 46/46。完整方法与源码快照见 [`2026-10-03-integration-audit.md`](2026-10-03-integration-audit.md)，不把替身窗口探针写成 Electron GUI 或 Windows 实机通过。

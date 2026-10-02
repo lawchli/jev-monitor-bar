@@ -848,3 +848,25 @@
   - 保留并纳入原工作区已暂存的 `docs/INTEGRATION.md`、`docs/PROTOCOL.md` 更正，原文历史保留。
 - 验证：Linux x64、Node 22.23.2、Python 3.13.5，对接手基线 `7aa03dd` 实跑 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（195/195）及 Python unittest（21/21）通过。HTTP/socket 测试在沙箱外运行；受沙箱限制的首次失败不记为应用缺陷。
 - 遗留：本次基线未在 Windows/macOS 重测；后续剩余审计项与集成验证单独记入下一条记录。
+
+## 33 — 剩余审计项整合与独立恢复链路复核
+
+- 日期：2026-10-02 至 2026-10-03
+- harness：codex
+- model：集成记录者 unknown；2026-10-03 用户指定的实现/独立审计 agents 为 gpt-sol（GPT-6.1 Sol、reasoning xhigh）
+- 提交：本条所在功能分支提交；接手基线 `7aa03dd` 是本地未推送修复，原提交与原脏工作区保留，不改写他人历史
+- 内容：
+  - L2：渲染页改用限定来源及五个静态资产的 `app://renderer`；拒绝其他路径、来源、方法与越界 symlink，保留 IPC 来源身份检查、CSP 和隔离，关闭 file 协议额外权限 fuse；smoke 增加本地脚本与读取阻止探针。
+  - L3/L4/I3/B3/C6：读段短锁重试、跳过与告警，导出区分坏行与读不了的段；POSIX events 0700、段与 metadata 0600；有界 `runs.json` 保存名称、模拟、开始及已知终态，读锁解除后合并恢复；每个新段首次写入之前原子保存 cursor 预留，高水位未知时拒绝确认，允许安全 cursor 空洞；检查已打开段的 nlink，避免继续确认写入外部已删除的文件。
+  - L5/L6/I4：Python 相对路径解析失败按离线，不依赖已删除 cwd 解析绝对 session；fork 后重建同步对象、队列及统计，保持 run_id、换 producer 并从 sequence 1 起；拒绝非有限 payload 与时间参数，不占序号、不启动非法配置的后台线程。
+  - 表格淘汰优化：WeakMap 元数据、整数键最小堆及字符串插入队列，保留 Object.keys 原有顺序与 500 条容量语义；适用于实时状态和回放复制表。独立 20,000 条差分及随机回放与原实现一致；实测基准见 `docs/reports/2026-10-02-bound-benchmark.md`，不是整体 UI 提速证明。
+  - 独立审计发现并修复 PY-A1/PY-A2、AD-01 与存储 S1–S5：恢复索引先于去重、读取失败不覆盖旧 metadata、跨段保存终态、成功保存清除旧告警，以及恢复发生在 duplicate/conflict/繁忙返回路径时仍通知 UI。main 对 `event` 与独立 `recovered` 共用 50ms 批次，读取当前 cursor，退出时取消订阅与待发批次。
+  - AD-01：发布包 ASAR 篡改探针只改合法注释字符，并要求明确完整性拒绝日志，排除语法错误/普通启动失败；Linux 不支持该运行时机制，明确 skip，不计通过。
+  - 接入、协议、README、Windows 验收清单与 HANDOFF 对齐真实行为和平台限制，保留历史实施与审计表。
+- 实际验证：
+  - 2026-10-02 早期整合快照：Linux x64，类型通过、TypeScript 231/231、源码 Electron smoke 34/34（200 次可见更新 p95 82ms）；Python 3.9.25 / 3.13.5 各 29/29。该快照早于存储 S1–S5 最终修复，不能作为最终全部验收证据。
+  - 2026-10-03 S5 稳定快照：类型、Prettier、diff 检查通过。逐文件 `node --import tsx tests/<文件>` 实跑 247 个真实 TypeScript 用例：231 通过、16 因 `listen EPERM 127.0.0.1` 被本轮沙箱拦截，无其他失败；完整结果本地 `.runtime/completion-validation/`。没有把受限用例改成自动 skip，也没有把文件级计数当用例数。
+  - 独立集成审计 91/91 定向用例通过；真实 main 源码转译 + EventStore + 批次订阅的八项恢复组合探针通过，窗口对象为替身，不声称 Chromium 或 Electron GUI 实测。报告 `docs/reports/2026-10-03-integration-audit.md`。
+  - 本轮 Python 全量再次尝试 29 项：13 通过、16 在创建 socket 时遭 PermissionError；独立 QA 在 Python 3.9 / 3.13 各实跑 13 项无 socket 仓库测试及 3 项组合探针通过，含实际 Linux fork 状态及 deleted cwd。完整 HTTP 投递仍需 CI/可监听环境复验。
+  - 本轮 Linux 源码构建与早期目录 zip 静态核对通过；Electron GUI 被本轮 OS sandbox shutdown 权限阻止。最终 UI/容量自动化追加后重新构建与制品核对，结果见下一条。
+- 遗留：本轮完整三平台 CI 和最终包待后续登记；不能在当前沙箱申请外部执行。Windows/macOS 实机、Defender、干净机器、签名与公证仍按对应平台验收，见 `docs/WINDOWS_ACCEPTANCE.md`。同步读写不等于 fsync，合法保留淘汰、legacy 无预留 torn 尾行与外部删除竞争窗口不承诺修复。

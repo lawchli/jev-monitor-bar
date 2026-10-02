@@ -1,13 +1,12 @@
-import {useState} from 'react';
+import {useId, useMemo, useState} from 'react';
 import type {ViewProps} from '../types';
 import {statusText, truncate} from '../view-model/common';
 import {DecisionsTab} from './DecisionsTab';
 import {ExecutionTab} from './ExecutionTab';
 import {TimelineTab} from './TimelineTab';
+import {ViewTabs, type ViewTab} from './ViewTabs';
 import {attemptGroups, decisionCards, laterAttemptKeys, runSummary} from './model';
 import './expanded.css';
-
-type TabId = 'decisions' | 'execution' | 'timeline';
 
 export function ExpandedView({
   snapshot,
@@ -22,7 +21,8 @@ export function ExpandedView({
   onOpenReplay,
   bridge,
 }: ViewProps) {
-  const [tab, setTab] = useState<TabId>('decisions');
+  const [tab, setTab] = useState<ViewTab>('decisions');
+  const panelId = useId();
   const runs = [...(snapshot?.runs ?? [])].sort((left, right) => {
     const leftTime = Date.parse(left.last_received ?? '') || 0;
     const rightTime = Date.parse(right.last_received ?? '') || 0;
@@ -30,7 +30,11 @@ export function ExpandedView({
   });
   const run = snapshot?.run;
   const summary = run ? runSummary(run, now) : undefined;
-  const events = (snapshot?.events ?? []).filter(event => !run || event.run_id === run.id);
+  const events = useMemo(
+    () => (snapshot?.events ?? []).filter(event => !run || event.run_id === run.id),
+    [snapshot?.events, run?.id],
+  );
+  const retryKeys = useMemo(() => (run ? laterAttemptKeys(run) : undefined), [run]);
 
   return (
     <section className="expanded-root" data-testid="expanded-root">
@@ -71,6 +75,7 @@ export function ExpandedView({
           ) : (
             <>
               <p className="expanded-empty">等待宿主连接…</p>
+              <p className="muted">接入后，决策、实际执行与验证结果会分别显示。监视器不会控制宿主任务。</p>
               <p className="muted">接收端 {status?.listening ? '在监听' : '未监听'}</p>
             </>
           )}
@@ -92,36 +97,13 @@ export function ExpandedView({
             <span>{summary.anomalyText}</span>
             {summary.limitedText ? <span className="tone-warning">{summary.limitedText}</span> : null}
           </div>
-          <div className="tabs" role="tablist">
-            <button
-              type="button"
-              role="tab"
-              data-testid="tab-decisions"
-              aria-selected={tab === 'decisions'}
-              onClick={() => setTab('decisions')}
-            >
-              决策
-            </button>
-            <button
-              type="button"
-              role="tab"
-              data-testid="tab-execution"
-              aria-selected={tab === 'execution'}
-              onClick={() => setTab('execution')}
-            >
-              执行
-            </button>
-            <button
-              type="button"
-              role="tab"
-              data-testid="tab-timeline"
-              aria-selected={tab === 'timeline'}
-              onClick={() => setTab('timeline')}
-            >
-              时间线
-            </button>
-          </div>
-          <div className="expanded-panel" role="tabpanel">
+          <ViewTabs selected={tab} onSelect={setTab} panelId={panelId} />
+          <div
+            className="expanded-panel"
+            id={panelId}
+            role="tabpanel"
+            aria-label={tab === 'decisions' ? '决策详情' : tab === 'execution' ? '执行详情' : '事件时间线'}
+          >
             {tab === 'decisions' ? <DecisionsTab cards={decisionCards(run)} /> : null}
             {tab === 'execution' ? <ExecutionTab groups={attemptGroups(run)} /> : null}
             {tab === 'timeline' ? (
@@ -129,7 +111,7 @@ export function ExpandedView({
                 events={events}
                 runId={run.id}
                 bridge={bridge}
-                retryKeys={laterAttemptKeys(run)}
+                retryKeys={retryKeys}
                 eventCount={run.event_count}
               />
             ) : null}

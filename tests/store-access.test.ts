@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {createMonitorHandlers, type RendererContents} from '../src/main/ipc-api';
-import {EventStore} from '../src/store';
+import {EventStore, type RecoveredChange} from '../src/store';
 
 const tempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'jev-access-'));
 let n = 0;
@@ -308,7 +308,17 @@ test('a torn newest row and unreadable reservation defer ingestion until the res
   assert.equal(store.events.length, 2);
   assert.equal(fs.existsSync(path.join(dir, segment(2))), false);
   assert.match(store.storageError ?? '', /尾行损坏/);
+  const changes: RecoveredChange[] = [];
+  store.on('recovered', (change: RecoveredChange) => changes.push(change));
+  const {received_at: _received, cursor: _cursor, ...retry} = store.events[0];
   read.mock.restore();
+  assert.equal(store.ingest(retry).accepted, false);
+  assert.ok(store.cursor > 3);
+  assert.deepEqual(
+    changes,
+    [{cursor: store.cursor, runIds: []}],
+    'a restored high-water mark is visible without a new run',
+  );
   assert.ok(store.ingest(next).cursor > 3);
   assert.equal(store.storageError, undefined);
   store.close();
@@ -324,10 +334,20 @@ test('a retry recovered from an unlocked startup segment is deduplicated before 
   t.mock.method(Date, 'now', () => now);
   const read = lock(t, segment(1), 'EBUSY');
   const store = new EventStore(dir);
+  const changes: RecoveredChange[] = [];
+  let newEvents = 0;
+  store.on('recovered', (change: RecoveredChange) => changes.push(change));
+  store.on('event', () => newEvents++);
+  assert.equal(store.events.length, 0);
+  const highWater = store.cursor;
   read.mock.restore();
   now += 1500;
-  assert.equal(store.ingest(original).accepted, false);
+  assert.deepEqual(store.ingest(original), {accepted: false, cursor: highWater});
   assert.equal(store.events.length, 1);
+  assert.deepEqual(changes, [{cursor: highWater, runIds: [original.run_id]}]);
+  assert.equal(newEvents, 0, 'recovering an acknowledged row is not a newly accepted event');
+  assert.deepEqual(store.ingest(original), {accepted: false, cursor: highWater});
+  assert.equal(changes.length, 1, 'retries after successful recovery do not repeat notifications');
   assert.equal(fs.existsSync(path.join(dir, segment(2))), false);
   const rows = store
     .exportLines()
@@ -351,11 +371,20 @@ test('a producer sequence recovered from an unlocked segment rejects a new event
   t.mock.method(Date, 'now', () => now);
   const read = lock(t, segment(1), 'EBUSY');
   const store = new EventStore(dir);
+  const changes: RecoveredChange[] = [];
+  let newEvents = 0;
+  store.on('recovered', (change: RecoveredChange) => changes.push(change));
+  store.on('event', () => newEvents++);
+  const highWater = store.cursor;
   read.mock.restore();
   now += 1500;
   const retry = {...original, event_id: 'recovered-sequence-conflict'};
   assert.deepEqual(store.ingest(retry), {accepted: false, conflict: true, cursor: store.cursor});
   assert.equal(store.events.length, 1);
+  assert.deepEqual(changes, [{cursor: highWater, runIds: [original.run_id]}]);
+  assert.equal(newEvents, 0);
+  assert.deepEqual(store.ingest(retry), {accepted: false, conflict: true, cursor: highWater});
+  assert.equal(changes.length, 1);
   assert.equal(fs.existsSync(path.join(dir, segment(2))), false);
   assert.ok(!store.exportLines().text.includes(retry.event_id));
   store.close();
@@ -369,6 +398,8 @@ test('a startup-skipped segment is incorporated in cursor order when its lock cl
   t.mock.method(Date, 'now', () => now);
   const read = lock(t, segment(2), 'EBUSY');
   const store = new EventStore(dir);
+  const changes: RecoveredChange[] = [];
+  store.on('recovered', (change: RecoveredChange) => changes.push(change));
   const jumped = store.ingest(event());
   const latestReceived = store.runs.get('run-1')?.last_received;
   assert.equal(store.events.length, 4);
@@ -377,6 +408,7 @@ test('a startup-skipped segment is incorporated in cursor order when its lock cl
   const next = store.ingest(event());
   assert.deepEqual(store.unreadableSegments, []);
   assert.equal(store.storageError, undefined);
+  assert.deepEqual(changes, [{cursor: jumped.cursor, runIds: ['run-1']}], 'a batch lists each changed run only once');
   assert.deepEqual(
     store.events.map(row => row.cursor),
     [1, 2, 3, 4, 5, 6, jumped.cursor, next.cursor],

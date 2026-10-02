@@ -134,12 +134,16 @@ export function App({bridge}: {bridge: MonitorBridge}) {
     <div id="app-root" data-cursor={snapshot?.cursor ?? 0} data-mode={mode}>
       {notices.map(([key, text]) =>
         text ? (
-          <p key={key} className="line tone-danger">
+          <p key={key} className="line app-notice tone-danger" role="alert">
             {text}
           </p>
         ) : null,
       )}
-      {exportNote ? <p className="line">{exportNote}</p> : null}
+      {exportNote ? (
+        <p className="line app-notice" role="status">
+          {exportNote}
+        </p>
+      ) : null}
       {replay ? (
         <ReplayView replay={replay} now={now} onExit={() => setReplay(null)} />
       ) : mode === 'expanded' ? (

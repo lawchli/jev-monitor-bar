@@ -59,6 +59,12 @@ function hasCursorReservation(file: string) {
   }
 }
 
+/** Previously acknowledged data became visible after a read lock cleared; no new event was accepted. */
+export interface RecoveredChange {
+  cursor: number;
+  runIds: string[];
+}
+
 export class EventStore extends EventEmitter {
   events: StoredEvent[] = [];
   runs = new Map<string, RunState>();
@@ -293,20 +299,26 @@ export class EventStore extends EventEmitter {
     if (loaded.unreadable) return false;
     this.runNames = boundedRunNames([...this.runNames, ...loaded.names]);
     this.runNamesUnreadable = false;
-    for (const run of this.runs.values()) nameRun(run, this.runNames);
+    const runIds: string[] = [];
+    for (const run of this.runs.values()) {
+      if (nameRun(run, this.runNames)) runIds.push(run.id);
+    }
     for (const [id, past] of this.evictedRuns) {
       const run = {id, ...past};
-      nameRun(run, this.runNames);
+      if (!nameRun(run, this.runNames)) continue;
       const {id: _id, ...hint} = run;
       this.evictedRuns.set(id, hint);
+      runIds.push(id);
     }
     this.runNamesError = undefined;
     this.reportRecoveryError();
+    if (runIds.length > 0) this.emit('recovered', {cursor: this.cursor, runIds} satisfies RecoveredChange);
     return true;
   }
   /** Re-read missing high-water data after a lock clears, without inventing an acknowledged cursor. */
   private recoverCursor() {
     if (!this.cursorUncertain && (this.unreadableSegments.length === 0 || Date.now() < this.recoveryRetryAt)) return;
+    const previousCursor = this.cursor;
     this.recoveryRetryAt = Date.now() + PRUNE_RETRY_MS;
     const ceiling = readCursorReservation(path.join(this.directory, CURSOR_RESERVATION_FILE));
     if (this.cursorUncertain && ceiling !== undefined) this.cursor = Math.max(this.cursor, ceiling);
@@ -336,8 +348,13 @@ export class EventStore extends EventEmitter {
     if (ceiling !== undefined) this.tornCursorUncertain = false;
     if (ceiling !== undefined || (unreadable.length === 0 && !this.tornCursorUncertain)) this.cursorUncertain = false;
     recovered.sort((a, b) => a.cursor - b.cursor);
-    for (const row of recovered) this.remember(row);
+    const runIds = new Set<string>();
+    for (const row of recovered) {
+      if (this.remember(row)) runIds.add(row.run_id);
+    }
     this.reportRecoveryError();
+    if (runIds.size > 0 || this.cursor !== previousCursor)
+      this.emit('recovered', {cursor: this.cursor, runIds: [...runIds]} satisfies RecoveredChange);
     if (this.cursorUncertain)
       throw Object.assign(new Error('Unreadable segments have no safe cursor reservation'), {code: 'EBUSY'});
   }
@@ -377,8 +394,8 @@ export class EventStore extends EventEmitter {
       if (!this.runs.has(id)) this.droppedRuns.delete(id);
     }
   }
-  private remember(e: StoredEvent) {
-    if (this.ids.has(e.event_id) || this.sequences.has(this.seq(e))) return;
+  private remember(e: StoredEvent): boolean {
+    if (this.ids.has(e.event_id) || this.sequences.has(this.seq(e))) return false;
     this.ids.add(e.event_id);
     this.sequences.add(this.seq(e));
     if (this.events.length === 0 || this.events[this.events.length - 1].cursor < e.cursor) this.events.push(e);
@@ -411,6 +428,7 @@ export class EventStore extends EventEmitter {
       this.bytes -= Buffer.byteLength(JSON.stringify(old));
       this.markDropped(old.run_id);
     }
+    return true;
   }
   ingest(raw: unknown) {
     validateEvent(raw);

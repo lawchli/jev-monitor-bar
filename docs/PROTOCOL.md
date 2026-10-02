@@ -27,7 +27,7 @@
 | 409 | `run_id` + `producer_id` + `sequence` 已占用，但是新的 `event_id` | `{accepted:false, conflict:true, cursor}`，不写入 |
 | 200 | 新事件已经写入 | `{accepted:true, cursor}` |
 
-`cursor` 从 1 开始，每接受一条新事件加 1。接收端另外记下 `received_at`（接收时刻的 ISO 时间）和这个 `cursor`。发送 schema 不允许额外字段，所以发送时不要带 `received_at` 或 `cursor`。
+`cursor` 在新目录从 1 开始，正常每接受一条新事件加 1；部分写入失败与安全恢复允许编号空洞，严格递增不等于连续。接收端另外记下 `received_at`（接收时刻的 ISO 时间）和这个 `cursor`。发送 schema 不允许额外字段，所以发送时不要带 `received_at` 或 `cursor`。当前文件锁/预留规则见文末「更正（2026-10-03，文件锁、运行元数据与 cursor）」；不要将 cursor 用作事件数量。
 
 健康检查和投递使用同一个 token。`requestTimeout` 是 2 秒，`headersTimeout` 是 3 秒，`maxConnections` 是 32。
 
@@ -45,7 +45,7 @@ token 是 32 个随机字节的 hex。会话里的 `url` 由接收端写成 `htt
 
 事件目录由调用方传给 `EventStore`。段文件名是 `events-NNNNNNNN.jsonl`（8 位段号）。一段的 JSONL 字节数要再增加就会超过 4194304（4 MiB）时，换下一个段号。只保留最近 8 段；删除更早的段如果遇到文件占用，这次忽略，下次轮转再试。每次新建 `EventStore` 都会新开一个段，不接着写上次没写满的段。空目录里的第一段是 `events-00000001.jsonl`。
 
-读回时按 `\n` 分行。`JSON.parse` 接受行尾的 `\r`，所以 CRLF 文件可以读。没通过校验的行计入 `corruptLines`，不进入状态。重启后的 cursor 高水位：一行只要 `JSON.parse` 成功，并且其中的 `cursor` 是安全整数，就计入高水位，即使 `validateEvent` 失败。完全无法 `JSON.parse` 的行只把 `corruptLines` 加一，不抬高 cursor。
+读回时按 `\n` 分行。`JSON.parse` 接受行尾的 `\r`，所以 CRLF 文件可以读。没通过校验的行计入 `corruptLines`，不进入状态。重启后的 cursor 高水位：一行只要 `JSON.parse` 成功，并且其中的 `cursor` 是安全整数，就计入高水位，即使 `validateEvent` 失败。完全无法 `JSON.parse` 的行不能提供自己的 cursor；当前实现对未知尾段/尾行另用安全 reservation，规则见文末 2026-10-03 更正。
 
 `EventStore` 和 `startServer` 仍使用调用方传入的目录和会话文件。默认位置由 `src/paths.ts` 的 `resolveMonitorPaths` 计算，桌面主进程启动时调用它：
 
@@ -112,7 +112,7 @@ ID 字符串长度 1–160，只允许 `A–Z`、`a–z`、数字和 `_ . : / -`
 - `action.selected` 可以不带 `decision_id`。`source` 为 `rule` 且没有 `decision_id`，表示规则直接选定动作，不是某次 JEV 判断的结果。
 - 判断的 `choice` 和动作的 `action` 可以不同。不同表示最终执行的不是模型选中的那一项；覆盖时带上 `rule` 和 `rule_source`。
 
-每个 run 最多留 500 个 decision 和 500 个 attempt。超出时删掉最早插入的一项，并把该 run 的 `limited` 设为 `true`。内存里最多 200 个 run。超出时优先淘汰已经结束（`ended_at` 已有）且 `last_received` 最早的；没有已结束的 run 时，淘汰 `last_received` 最早的。
+每个 run 最多留 500 个 decision 和 500 个 attempt。超出时按 `Object.keys` 顺序删最早一项（整数索引键按数值排序，其他键按插入顺序），并把该 run 的 `limited` 设为 `true`。内存里最多 200 个 run。超出时优先淘汰已经结束（`ended_at` 已有）且结束时间点最早的；没有已结束的 run 时，淘汰 `last_received` 最早的。被淘汰 run 的有界提示与重启 metadata 规则见文末两条更正。
 
 ## 身份与去重
 
@@ -206,6 +206,8 @@ run：
 
 `exportLines` 按段文件逐行读，不把多段原文拼成一段。先去掉文件开头的 BOM，再按 `\n` 分行并去掉行尾 `\r`。每一非空行先 `JSON.parse`，再对去掉 `received_at` 和 `cursor` 之后的事件做 `validateEvent`；`received_at` 必须是字符串，`cursor` 必须是安全整数。通过后用 `sanitizeEvent(..., false)` 脱敏，并丢掉 `diagnostic`。无法解析、校验失败或信封不合格的行计入 `skipped`，不写入结果。空行不计入 `skipped`。
 
+单段持续读不了时跳过该段，不让其余段的导出失败；返回 `{text, skipped, unreadable}`，`unreadable` 是跳过的段数，不是行数。IPC 导出结果携带这两个计数，界面显示部分导出提示。导出仅包含保留的事件段，不携带 `runs.json`，因此回放不保证恢复事件窗口之外的任务名称、终态或聚合内容。
+
 ## Schema 文件
 
 JSON Schema 在 `protocol/event.schema.json`。它由 `src/protocol.ts` 里的 `schema` 导出：
@@ -261,3 +263,28 @@ C10 改动之后，上文「会话文件与数据目录」和「补充」里关�
 - 对象键名按键名整值替换的列表增加 passwd、passphrase、access key、private key。
 - 仍然不处理：没有键名、也不是上述格式的秘密（例如随手写在句子里的密码）；全角冒号等中文写法（`密码：…`）；候选名等字典键。接收端的脱敏仍是兜底，发送端不要把秘密放进事件。
 - 被淘汰的 run（上文「ID 关联规则」最后一段）：淘汰已结束的 run 时按 `ended_at` 的时间点取最早的一个（记录 28 的 L7 起就是这样，上文写成了 `last_received`）。被淘汰的 run 现在留一条记录：名字、模拟标记、状态、`started_at`、`ended_at`，最多记 1000 个，超出时先忘掉最早被淘汰的。之后再收到这个 run 的事件时，按记录恢复，而不是重建成名字等于 ID、没有结束的新 run。已结束的 run 恢复后仍是已结束，按上面的规则通常马上又被淘汰，不会挤掉运行中的 run；发送端在 `run.completed` 之后不关、继续发心跳时就是这种情形。事件本身照常写盘、进入内存窗口和导出。决策、尝试等聚合内容不随记录保留，恢复后从新到的事件重新累计。回放（逐步与检查点）用同一套规则。这些记录只在内存里，重启后从保留的段重新计算。
+
+## 更正（2026-10-03，文件锁、运行元数据与 cursor）
+
+本轮 L3/L4/I3/B3/C6 与独立审计修复改变了此前「会话文件与数据目录」、2026-09-30 写入补充及 2026-10-01 内存记录的部分边界。历史原文保留，当前行为如下：
+
+- 段读取对 `EBUSY` / `EPERM` / `EACCES` 在 20/40 ms 后重试；仍读不了就跳过、记录 `unreadableSegments` 和 `storageError`，启动不因单段读锁失败。后续投递至多每秒补读一次；补读和索引恢复先于当前请求的 event_id 去重与 sequence conflict 判断，因此恢复后的重复请求仍为 `accepted:false`，冲突仍为 409。
+- 新段第一条事件写入前，必须先把 `cursor-reservation.json` 原子写成功；文件为 `{version:1, ceiling:<安全整数>}`，不超过 1 KiB。上界按至少每字节一个 cursor 保守预留，不为每条事件另写 metadata。恢复遇到未知尾段或最终不可解析残行时，可跳到该安全上界；之后的已确认 cursor 可以有较大空洞。
+- 尾段高水位不明且预留不可读/无效时，暂缓写入并返回 503；后续请求可重新恢复。旧版日志没有预留文件且尾行完全不可解析时，仍只有可解析行的高水位保证。预留文件保护新写入，不追溯修复旧版已丢编号。
+- 写入仍按 `writeSync` 完整行后确认，不增加 fsync。写出部分数据后失败会烧掉该 cursor 并换段；下一条不复用这个编号。503 代表未确认，不等于磁盘上绝无残行。
+- 每次写入前检查打开段的 `fstat().nlink`；为 0 时换段，避免外部删除后继续向 unlink 的 fd 确认新事件。外部已删历史无法恢复，检查到写入之间仍有竞争窗口。
+- `events/` 在 POSIX 为 0700，段、`runs.json` 和 `cursor-reservation.json` 为 0600；启动也尝试修正已有权限。Windows 的 mode/chmod 不改变 ACL，仍依赖用户目录权限。
+
+### `runs.json` v1
+
+在清理旧段前，临时文件加重命名原子保存如下有界元数据：
+
+```json
+{"version":1,"runs":[{"id":"example-run","name":"模拟：示例","simulated":true,"started_at":"2026-10-03T00:00:00.000Z","status":"completed","ended_at":"2026-10-03T00:00:01.000Z"}]}
+```
+
+最多 1200 条、1 MiB，优先保留较新记录。`status` / `ended_at` 可选；仅一起存在且 status 为 `completed`、`failed` 或 `cancelled` 的有效结束状态参与恢复。兼容旧版仅名字/模拟/起始时间的 v1 文件。元数据包含已列出与已淘汰的 run 提示，不保存全部判断、尝试或事件；事件段已被合法轮转、metadata 又被有界淘汰时，完整历史仍无法恢复。
+
+重启后仍有保留事件、但缺少 `run.started` 或结束事件的 run 可以恢复名称、模拟标记及已知终态；新到的合法结束事件仍按状态机的时间规则更新。启动读取元数据被锁住时不把缺失表覆盖回旧文件，解除锁后补读并合并当前信息。连续五次保存失败后仍按段保留上限清理并告警，避免仅因 metadata 故障无限增长；实际删除段的文件锁仍可能暂时超限。之后成功保存会清除旧告警。
+
+这份 metadata 是实时 store 恢复提示，不进入 JSONL 导出。回放只针对文件中保留的事件重建状态，不承诺恢复窗口之前的内容。Python 发送器对非有限数、路径失败和 POSIX fork 的本轮规则见 [`INTEGRATION.md`](INTEGRATION.md) 第 1、2 节。

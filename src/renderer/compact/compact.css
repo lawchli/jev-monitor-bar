@@ -7,12 +7,15 @@ body,
 }
 
 .compact-root {
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 1px;
-  padding: 2px 8px;
+  gap: 2px;
+  padding: 2px 9px;
+  border-left: 3px solid var(--tone-active);
+  background: var(--surface);
   overflow: hidden;
   font-size: var(--font-size-sm);
   line-height: 1.25;
@@ -47,6 +50,40 @@ body,
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  font-weight: 650;
+}
+
+.compact-name {
+  font-weight: 650;
+}
+
+.compact-meta,
+.compact-recent {
+  color: var(--tone-neutral);
+}
+
+.compact-outcome {
+  font-weight: 550;
+}
+
+.compact-heading {
+  padding-bottom: 1px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Keep the platform warning and storage error readable in the 96px client area, without hiding core rows. */
+.compact-root:has(.compact-note):has(.compact-row.tone-danger) {
+  gap: 0;
+  padding-block: 1px;
+}
+
+.compact-root:has(.compact-note):has(.compact-row.tone-danger) .compact-heading {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.compact-root:has(.compact-note):has(.compact-row.tone-danger) button {
+  padding-block: 0;
 }
 
 .compact-dot {
@@ -59,7 +96,7 @@ body,
 .compact-connection {
   flex: 0 1 auto;
   min-width: 0;
-  max-width: 38%;
+  max-width: 30%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -82,9 +119,9 @@ body,
 .compact-root button {
   flex: none;
   margin: 0;
-  padding: 0 6px;
-  border: 1px solid color-mix(in srgb, var(--fg) 28%, transparent);
-  border-radius: 4px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
   background: transparent;
   color: inherit;
   font: inherit;
@@ -95,6 +132,11 @@ body,
 .compact-root button.is-on {
   border-color: var(--tone-active);
   color: var(--tone-active);
+  background: color-mix(in srgb, var(--tone-active) 7%, var(--surface));
+}
+
+.compact-root button:hover {
+  background: var(--hover);
 }
 
 .compact-root button.compact-link {

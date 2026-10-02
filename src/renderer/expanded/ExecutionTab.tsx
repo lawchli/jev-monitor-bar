@@ -2,7 +2,7 @@ import {truncate} from '../view-model/common';
 import type {AttemptGroupModel} from './model';
 
 export function ExecutionTab({groups}: {groups: AttemptGroupModel[]}) {
-  if (groups.length === 0) return <p className="expanded-empty">尚无执行</p>;
+  if (groups.length === 0) return <p className="expanded-empty">尚无执行 · 动作与后续验证由宿主分别报告</p>;
   return (
     <div className="execution-list">
       {groups.map(group => (

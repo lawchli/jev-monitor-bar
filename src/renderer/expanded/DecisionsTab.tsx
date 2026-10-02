@@ -5,7 +5,7 @@ import type {DecisionCardModel} from './model';
 export function DecisionsTab({cards}: {cards: DecisionCardModel[]}) {
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const firstId = cards[0]?.id;
-  if (cards.length === 0) return <p className="expanded-empty">尚无决策</p>;
+  if (cards.length === 0) return <p className="expanded-empty">尚无决策 · 宿主提供判断后显示，不生成额外解释或概率</p>;
   return (
     <div className="decision-list">
       {cards.map(card => {

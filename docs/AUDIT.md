@@ -125,3 +125,23 @@ C6：P1-02 以及现在的集成分支只保住可解析 JSON 的 cursor。恢�
 ## 2026-10-02 M2/M3 修复更正（codex）
 
 上面的审计表是当时快照，原行保留。`7aa03dd` 已处理 M2、M3；代码、接入说明与协议更正见实施记录 32。接手基线在 Linux 上类型、格式、195 项 TypeScript 测试与 21 项 Python 测试通过。本次没有将 Windows/macOS 验证写为通过。其余剩余项由后续独立审计和集成验证记录说明。
+
+## 2026-10-03 剩余项整合与独立复审（codex）
+
+集成记录者模型系列 unknown；本轮用户指定的并行实现与独立审计 agents 为 codex/gpt-sol。原问题表与历史报告不删除。代码快照为 `7aa03dd` 加功能分支集成改动，实施记录 33；独立报告见 [集成恢复链路复审](reports/2026-10-03-integration-audit.md)、[存储初审](reports/2026-10-02-audit-storage.md)、[Python 二次复核](reports/2026-10-02-audit-python-recheck.md) 和 [桌面审计](reports/2026-10-02-audit-desktop.md)。
+
+| 条目 | 当前代码结论 | 验证与边界 |
+| --- | --- | --- |
+| L2 | 已实现受限 app:// 渲染协议，关闭 file 额外权限 fuse | 来源/方法/路径/symlink 与 IPC 回归通过；本轮最终 Chromium GUI 仍需可用环境/CI |
+| L3 | 已实现短锁重试、跳过/告警、解锁补读及部分导出提示 | 补读在去重前；未知高水位拒绝写入；锁用 fs 注入，不冒充 Windows 扫描实测 |
+| L4 | 已实现有界名称/模拟/起始及已知终态 metadata | 读失败不覆盖旧完整表，解锁合并，持续故障仍有界轮转；被合法淘汰的信息无法完整恢复 |
+| L5 / L6 / I4 | 已修复 deleted cwd、fork 和非有限数处理 | Python 3.9/3.13 独立无网络与实际 Linux fork 检查通过；全量投递待 CI，Windows 无 fork |
+| I3 | 已实现 POSIX 0700 / 0600，已有权限尝试收紧 | Windows mode/chmod 不改变 ACL，不声称 ACL 或 Defender 已验 |
+| B3 | 已加 nlink 检查，下一次确认前换段 | 已删除历史及检查后删除的竞争窗口仍不能恢复 |
+| C6 | 新写段先保存安全 cursor ceiling，不确定时 503 | 编号允许空洞；完全无法解析的 legacy 尾行无 reservation 仍只有可解析高水位保证 |
+| PY-A1 / PY-A2 | 非有限时间参数拒绝；绝对 SESSION 独立于相对 HOME | 修复前回归红灯、修复后复核通过，报告保留实跑范围 |
+| AD-01 | ASAR 探针改合法注释，必须有明确完整性日志 | 不把语法错误当完整性通过；Linux 显式不适用；Win/Mac 运行时待对应环境 |
+| S1–S4 | 恢复后去重、名称合并、跨段终态、旧告警清理均修复 | 原独立探针复跑通过，最终仓库回归纳入 |
+| S5 | recovered 与 event 同 50ms 批次通知，cursor 取当前高水位 | 八项实际 main + 真实 store 的替身窗口组合通过；新增五项订阅回归通过 |
+
+本轮存储/桌面/Python 收尾的独立复审未发现新增代码阻断。当前沙箱禁止 socket 和 Electron 启动：247 个 TypeScript 用例中 231 实跑通过，16 的失败栈均为监听 EPERM；这是受限全套尝试，不标全套通过。Python 全量同样 13 通过、16 socket 权限错误；独立 QA 两个 Python 版本各 13+3 实跑通过。本轮最终 UI、容量自动化、完整三平台 CI 和制品结果由下一条记录追加，不能用早期整合 231/231、34/34 或历史 Windows 记录替代。

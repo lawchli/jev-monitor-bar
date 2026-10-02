@@ -106,6 +106,59 @@ test('object keys that name credentials are redacted in diagnostics', () => {
   });
 });
 
+test('URL fast path skips only impossible matches and preserves the original redaction order', t => {
+  const urlPattern = /\b([a-z][a-z0-9+.-]{0,31}:\/\/)[^\s/?#@]+@/gi;
+  const originalReplace = String.prototype.replace;
+  let urlScans = 0;
+  t.mock.method(String.prototype, 'replace', function (this: string, pattern: unknown, replacement: unknown) {
+    if (pattern instanceof RegExp && pattern.source === urlPattern.source) urlScans++;
+    return Reflect.apply(originalReplace, this, [pattern, replacement]);
+  } as typeof originalReplace);
+  for (const input of [
+    'ordinary summary '.repeat(250),
+    'https://example.com/path',
+    'user@example.com',
+    'https:/user@example.com',
+    '-----BEGIN PRIVATE KEY-----https://fake:fake@example.com-----END PRIVATE KEY-----',
+  ])
+    redact(input);
+  assert.equal(urlScans, 0);
+  assert.equal(redact('fetch https://fake:fake@example.com/path'), 'fetch https://[REDACTED]@example.com/path');
+  assert.equal(urlScans, 1);
+  t.mock.restoreAll();
+
+  // The old stage is deliberately kept as a reference, including PEM removal before userinfo masking.
+  const referenceStage = (input: string) =>
+    input
+      .replace(/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/g, '[REDACTED]')
+      .replace(urlPattern, '$1[REDACTED]@');
+  const parts = [
+    'a',
+    'HTTP',
+    'custom+scheme',
+    'a'.repeat(33),
+    'user:fake',
+    '://',
+    '@',
+    '/',
+    '?',
+    '#',
+    ' ',
+    '\n',
+    '钥匙',
+  ];
+  let seed = 7;
+  for (let sample = 0; sample < 600; sample++) {
+    let input = '';
+    for (let part = 0; part < 12; part++) {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      input += parts[seed % parts.length];
+    }
+    assert.equal(redact(input), redact(referenceStage(input)), input);
+  }
+  for (const [input] of cases) assert.equal(redact(input), redact(referenceStage(input)), input);
+});
+
 test('redaction stays linear on long adversarial text', () => {
   // A diagnostic string can fill most of a 64 KiB event.
   const fill = (unit: string) => unit.repeat(Math.ceil(65536 / unit.length)).slice(0, 65536);

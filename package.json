@@ -18,6 +18,7 @@
     "demo:host": "node scripts/demo-host.mjs",
     "smoke": "node scripts/smoke.mjs",
     "loadtest": "tsx scripts/loadtest/run.mts",
+    "stress:store": "node --import tsx scripts/loadtest/store-stress.mts",
     "bench:replay": "tsx scripts/loadtest/replay-bench.mts",
     "schema:export": "tsx scripts/export-schema.ts"
   },

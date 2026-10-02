@@ -40,11 +40,14 @@ const knownTokens =
 export function redact(value: unknown, depth = 0): unknown {
   if (depth > 12) return '[TRUNCATED]';
   if (typeof value === 'string') {
-    const out = value
+    let out = value
       // A key cut off by the length limit has no END line; the rest of the text goes with it.
-      .replace(/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/g, '[REDACTED]')
-      // Bounded scheme: an unbounded one rescans the rest of a long `a-a-a…` from every word start.
-      .replace(/\b([a-z][a-z0-9+.-]{0,31}:\/\/)[^\s/?#@]+@/gi, '$1[REDACTED]@')
+      .replace(/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/g, '[REDACTED]');
+    // Both delimiters are necessary for a match. Avoid scanning ordinary summaries with the URL regex.
+    // Keep the bounded scheme and the same replacement/order for strings that could contain userinfo.
+    if (out.includes('://') && out.includes('@'))
+      out = out.replace(/\b([a-z][a-z0-9+.-]{0,31}:\/\/)[^\s/?#@]+@/gi, '$1[REDACTED]@');
+    out = out
       .replace(cookie, (_, key: string, v: string) => key + hidden(v))
       .replace(keyValue, (_, key: string, auth: string | undefined, v: string) => key + (auth ?? '') + hidden(v))
       .replace(/Bearer\s+[\w.+\-/=]+/gi, 'Bearer [REDACTED]')

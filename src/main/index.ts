@@ -3,13 +3,13 @@ import {app, protocol, session, type BrowserWindow} from 'electron';
 import {resolveMonitorPaths} from '../paths';
 import {EventStore} from '../store';
 import {startServer} from '../server';
-import {IPC, type Changed, type ReceiverStatus} from '../ipc';
-import type {StoredEvent} from '../protocol';
+import {IPC, type ReceiverStatus} from '../ipc';
 import {detectPlatform} from './platform';
 import {createMonitorWindow, loadMonitorWindow, type MonitorWindowController} from './window';
 import {registerIpc} from './ipc-handlers';
 import {armQuit, recordCleanupFailure} from './lifecycle';
 import {createRendererHandler, RENDERER_SCHEME, RENDERER_SCHEME_PRIVILEGES, RENDERER_URL} from './renderer-protocol';
+import {subscribeStoreChanges} from './store-changes';
 
 const paths = resolveMonitorPaths();
 app.setPath('userData', paths.electronProfileDir);
@@ -91,20 +91,9 @@ if (!app.requestSingleInstanceLock()) {
     registerIpc({store, controller, getStatus, rendererUrl: RENDERER_URL, contents: win.webContents});
     loadMonitorWindow(win);
     if (!store) return;
-    let timer: NodeJS.Timeout | undefined;
-    let cursor = store.cursor;
-    const runIds = new Set<string>();
-    const flush = () => {
-      timer = undefined;
-      const change: Changed = {cursor, runIds: [...runIds]};
-      runIds.clear();
+    const unsubscribeChanges = subscribeStoreChanges(store, change => {
       if (win && !win.isDestroyed()) win.webContents.send(IPC.changed, change);
-    };
-    store.on('event', (event: StoredEvent) => {
-      cursor = event.cursor;
-      runIds.add(event.run_id);
-      if (timer) return;
-      timer = setTimeout(flush, 50);
     });
+    app.once('will-quit', unsubscribeChanges);
   });
 }

@@ -1,13 +1,13 @@
-import {useEffect, useMemo, useState} from 'react';
+import {useEffect, useId, useMemo, useState} from 'react';
 import type {MonitorBridge, ReplayData} from '../../ipc';
 import {ReplayTimeline, fileBase, pageReplay} from '../../replay';
 import {DecisionsTab} from '../expanded/DecisionsTab';
 import {ExecutionTab} from '../expanded/ExecutionTab';
 import {TimelineTab} from '../expanded/TimelineTab';
+import {ViewTabs, type ViewTab} from '../expanded/ViewTabs';
 import {attemptGroups, decisionCards, laterAttemptKeys, runSummary} from '../expanded/model';
 import {pickDefaultRun, statusText, truncate} from '../view-model/common';
 
-type TabId = 'decisions' | 'execution' | 'timeline';
 type Speed = 1 | 10;
 
 const stepMs: Record<Speed, number> = {1: 800, 10: 80};
@@ -18,7 +18,8 @@ export function ReplayView({replay, now, onExit}: {replay: ReplayData; now: numb
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState<Speed>(1);
   const [runId, setRunId] = useState<string | undefined>();
-  const [tab, setTab] = useState<TabId>('decisions');
+  const [tab, setTab] = useState<ViewTab>('decisions');
+  const panelId = useId();
   // 拖动和播放都从最近的检查点接着算，不再每步从第 0 条重算。
   const timeline = useMemo(() => new ReplayTimeline(replay.events), [replay.events]);
   const snapshot = useMemo(() => timeline.snapshot(index, runId), [timeline, index, runId]);
@@ -26,6 +27,8 @@ export function ReplayView({replay, now, onExit}: {replay: ReplayData; now: numb
   const summary = run ? runSummary(run, now) : undefined;
   const selectedRunId = run?.id ?? pickDefaultRun(snapshot.runs)?.id ?? '';
   const name = fileBase(replay.file);
+  const events = useMemo(() => snapshot.events.slice(-timelineTail), [snapshot.events]);
+  const retryKeys = useMemo(() => (run ? laterAttemptKeys(run) : undefined), [run]);
 
   useEffect(() => {
     if (!playing) return;
@@ -145,26 +148,21 @@ export function ReplayView({replay, now, onExit}: {replay: ReplayData; now: numb
             <span>阶段 {summary.phase}</span>
             <span>进度 {summary.progress}</span>
           </div>
-          <div className="tabs" role="tablist">
-            <button type="button" role="tab" aria-selected={tab === 'decisions'} onClick={() => setTab('decisions')}>
-              决策
-            </button>
-            <button type="button" role="tab" aria-selected={tab === 'execution'} onClick={() => setTab('execution')}>
-              执行
-            </button>
-            <button type="button" role="tab" aria-selected={tab === 'timeline'} onClick={() => setTab('timeline')}>
-              时间线
-            </button>
-          </div>
-          <div className="expanded-panel" role="tabpanel">
+          <ViewTabs selected={tab} onSelect={setTab} panelId={panelId} />
+          <div
+            className="expanded-panel"
+            id={panelId}
+            role="tabpanel"
+            aria-label={tab === 'decisions' ? '回放决策详情' : tab === 'execution' ? '回放执行详情' : '回放事件时间线'}
+          >
             {tab === 'decisions' ? <DecisionsTab cards={decisionCards(run)} /> : null}
             {tab === 'execution' ? <ExecutionTab groups={attemptGroups(run)} /> : null}
             {tab === 'timeline' ? (
               <TimelineTab
-                events={snapshot.events.slice(-timelineTail)}
+                events={events}
                 runId={run.id}
                 bridge={pageBridge}
-                retryKeys={laterAttemptKeys(run)}
+                retryKeys={retryKeys}
                 eventCount={run.event_count}
               />
             ) : null}

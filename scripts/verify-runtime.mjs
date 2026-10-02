@@ -1,12 +1,17 @@
 // 在当前主机上实际启动 release/ 里的发布包，确认 fuses 与 asar 完整性在运行时生效：
-// ELECTRON_RUN_AS_NODE、NODE_OPTIONS、--inspect 都不起作用；改动 app.asar 里 main.cjs 的一个字节后应用拒绝启动。
+// ELECTRON_RUN_AS_NODE、NODE_OPTIONS、--inspect 都不起作用；app:// 正常渲染且 file:// 无法读取 ASAR；
+// 改动 app.asar 里 main.cjs 的一个字节后应用拒绝启动。
 // 只能测与主机同平台的包（先 pnpm package）。用法：pnpm package:runtime [--platform p] [--arch a]
 import {spawn} from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
+import {pathToFileURL} from 'node:url';
 import {getRawHeader, statFile} from '@electron/asar';
+import {chromium} from 'playwright';
 import {parseTarget, releaseNames} from './package-config.mjs';
+import {RENDERER_URL} from './smoke-lib.mjs';
+import {harmlessMainTamper, integrityRejected, supportsAsarIntegrity} from './runtime-integrity.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 const target = parseTarget(process.argv.slice(2));
@@ -31,6 +36,10 @@ const results = [];
 const record = (name, ok, detail) => {
   results.push({name, ok, detail});
   console.log(`  ${ok ? 'ok  ' : 'FAIL'} ${name}${detail ? ` (${detail})` : ''}`);
+};
+const skip = (name, detail) => {
+  results.push({name, ok: null, skipped: true, detail});
+  console.log(`  skip ${name} (${detail})`);
 };
 
 function launch(dir, name, {args = [], env = {}} = {}) {
@@ -130,20 +139,64 @@ async function checkInspect() {
   );
 }
 
-/** 改 main.cjs 中间的一个字节。启用 asar 完整性校验时，应用应在接收端起来之前退出。 */
+/** Verify the release renderer works while the disabled file:// privilege no longer reads inside ASAR. */
+async function checkFileProtocol() {
+  const app = launch(releaseDir, 'file-protocol', {args: ['--remote-debugging-port=0']});
+  const endpointPattern = /DevTools listening on (ws:\/\/\S+)/;
+  let browser;
+  let ok = false;
+  let detail = '';
+  try {
+    if (!(await waitFor(() => endpointPattern.test(app.output()), READY_MS))) throw new Error('no DevTools endpoint');
+    browser = await chromium.connectOverCDP(endpointPattern.exec(app.output())[1], {timeout: READY_MS});
+    const context = browser.contexts()[0];
+    let page;
+    await waitFor(() => (page = context.pages().find(item => item.url() === RENDERER_URL)), READY_MS);
+    if (!page) throw new Error(`renderer is not at ${RENDERER_URL}: ${context.pages().map(item => item.url())}`);
+    await page.locator('#app-root').waitFor({timeout: READY_MS});
+    const asarIndex = pathToFileURL(
+      path.join(releaseDir, names.resources, 'app.asar', 'dist', 'renderer', 'index.html'),
+    );
+    try {
+      await page.goto(asarIndex.href, {timeout: 10_000});
+      detail = `file:// loaded ${page.url()}`;
+    } catch (error) {
+      const reason = (error instanceof Error ? error.message : String(error)).split('\n')[0];
+      ok = reason.includes('ERR_FILE_NOT_FOUND');
+      detail = ok ? `renderer at ${RENDERER_URL}; file:// into app.asar: ERR_FILE_NOT_FOUND` : reason;
+    }
+  } catch (error) {
+    detail = error instanceof Error ? error.message.split('\n')[0] : String(error);
+  } finally {
+    await browser?.close().catch(() => {});
+    await stop(app);
+  }
+  record('renderer on app://, file:// cannot read app.asar', ok, detail);
+}
+
+/** 只改 main.cjs 注释中的合法字母，并要求明确的完整性错误；不能把语法错误算作校验生效。 */
 async function checkAsarTamper() {
+  if (!supportsAsarIntegrity(target.platform)) {
+    skip('tampered app.asar refused', 'Electron ASAR integrity is supported on Windows/macOS, not Linux');
+    return;
+  }
   const copy = path.join(work, 'tampered', names.dirName);
   fs.cpSync(releaseDir, copy, {recursive: true, verbatimSymlinks: true});
   const asarPath = path.join(copy, names.resources, 'app.asar');
   const {headerSize} = getRawHeader(asarPath);
   const entry = statFile(asarPath, 'dist/main.cjs');
-  const position = 8 + headerSize + Number(entry.offset) + Math.floor(entry.size / 2);
+  const start = 8 + headerSize + Number(entry.offset);
   const fd = fs.openSync(asarPath, 'r+');
   try {
-    const byte = Buffer.alloc(1);
-    fs.readSync(fd, byte, 0, 1, position);
-    byte[0] ^= 0x20;
-    fs.writeSync(fd, byte, 0, 1, position);
+    const source = Buffer.alloc(entry.size);
+    let read = 0;
+    while (read < source.length) {
+      const count = fs.readSync(fd, source, read, source.length - read, start + read);
+      if (count <= 0) throw new Error('Incomplete main.cjs read for integrity probe');
+      read += count;
+    }
+    const tamper = harmlessMainTamper(source);
+    fs.writeSync(fd, Buffer.from([tamper.after]), 0, 1, start + tamper.offset);
   } finally {
     fs.closeSync(fd);
   }
@@ -153,8 +206,12 @@ async function checkAsarTamper() {
   await stop(app);
   record(
     'tampered app.asar refused',
-    Boolean(exited) && !started,
-    started ? 'receiver started' : exited ? `exit ${exited.code ?? exited.signal}` : 'still running',
+    integrityRejected({exited, started, output: app.output()}),
+    started
+      ? 'receiver started'
+      : exited
+        ? `exit ${exited.code ?? exited.signal}; ${app.output().slice(-1500)}`
+        : 'still running',
   );
 }
 
@@ -162,8 +219,11 @@ console.log(`package:runtime ${names.dirName}（主机 ${process.platform}-${pro
 await checkRunAsNode();
 await checkNodeOptions();
 await checkInspect();
+await checkFileProtocol();
 await checkAsarTamper();
 fs.writeFileSync(path.join(work, 'report.json'), `${JSON.stringify({target, version, results}, null, 2)}\n`);
-const failed = results.filter(result => !result.ok);
-console.log(failed.length ? `\n${failed.length} 项失败` : `\n全部 ${results.length} 项通过`);
+const failed = results.filter(result => result.ok === false);
+const passed = results.filter(result => result.ok === true).length;
+const skipped = results.filter(result => result.skipped).length;
+console.log(failed.length ? `\n${failed.length} 项失败` : `\n通过 ${passed} 项，跳过 ${skipped} 项`);
 process.exit(failed.length ? 1 : 0);

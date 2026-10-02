@@ -358,6 +358,52 @@ test('export redacts secrets and keeps one validated event per line', async () =
   assert.equal(result.bytes, Buffer.byteLength(exported.text));
 });
 
+test('partial export reports unreadable segments through IPC while preserving readable events', async () => {
+  const dir = tempDir();
+  const events = path.join(dir, 'events');
+  const store = new EventStore(events);
+  try {
+    store.ingest(JSON.parse(monitorLine(1)));
+    // A directory with a segment filename is unreadable as JSONL on every supported platform.
+    fs.mkdirSync(path.join(events, 'events-00000099.jsonl'));
+    const frame = {url: 'app://renderer/index.html'};
+    const contents: RendererContents = {mainFrame: frame};
+    const handlers = createMonitorHandlers({
+      store,
+      controller: {setMode: mode => mode, setPinned: pinned => pinned},
+      getStatus: () => {
+        throw new Error('unused');
+      },
+      rendererUrl: frame.url,
+      contents,
+    });
+    let saved = '';
+    const result = await handlers.exportEvents(
+      {sender: contents, senderFrame: frame},
+      {
+        saveDialog: async () => '/tmp/partial-export.jsonl',
+        openDialog: async () => undefined,
+        readBounded: () => ({ok: true, text: saved}),
+        write: (_file, text) => {
+          saved = text;
+        },
+      },
+    );
+    assert.equal(result.saved, true);
+    assert.equal(result.unreadable, 1);
+    assert.equal(result.skipped, 0);
+    const parsed = parseReplay(saved, parsers);
+    assert.equal(parsed.invalidLines, 0);
+    assert.deepEqual(
+      parsed.events.map(event => event.event_id),
+      ['e1'],
+    );
+  } finally {
+    store.close();
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
 test('export and open replay stay inside the monitor window', async () => {
   const dir = tempDir();
   const store = new EventStore(path.join(dir, 'events'));

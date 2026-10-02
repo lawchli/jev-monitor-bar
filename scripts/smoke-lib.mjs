@@ -5,6 +5,8 @@ export const COMPACT_WIDTH = {min: 360, max: 440};
 export const EXPANDED_MIN_HEIGHT = 320;
 // Windows 的 getBounds 含不可见的缩放边框，贴边时会超出 workArea 几个像素。
 export const WORK_AREA_TOLERANCE_PX = 8;
+/** 与 src/main/renderer-protocol.ts 一致；tests/smoke-lib.test.ts 核对。 */
+export const RENDERER_URL = 'app://renderer/index.html';
 
 /** 与 src/state.ts 的 labels 一致；tests/smoke-lib.test.ts 会核对。 */
 export const statusLabels = {

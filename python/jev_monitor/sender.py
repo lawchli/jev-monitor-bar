@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import queue
 import re
@@ -14,10 +15,11 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+import weakref
 from datetime import datetime, timezone
 from typing import Optional
 
-from .paths import resolve_paths
+from .paths import resolve_session_file
 
 EVENT_TYPES = frozenset(
     {
@@ -107,8 +109,12 @@ def _omit_none(payload: dict) -> dict:
 
 
 def _encode_event(event: dict) -> bytes:
-    """JSON snapshot. Raises TypeError, ValueError, UnicodeError, or RecursionError."""
-    return json.dumps(event, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+    """JSON snapshot. Raises TypeError, ValueError, UnicodeError, or RecursionError.
+
+    NaN and infinities raise ValueError: they are not JSON, and the receiver
+    would answer 400.
+    """
+    return json.dumps(event, ensure_ascii=False, allow_nan=False, separators=(',', ':')).encode('utf-8')
 
 
 def _snapshot_event(event: dict) -> bytes:
@@ -167,14 +173,52 @@ def _read_session(path: str) -> Optional[dict]:
     return {'url': origin, 'token': token}
 
 
+def _default_session_file() -> Optional[str]:
+    """Default session path, or None when it cannot be resolved.
+
+    An explicit session override does not require the data home to resolve.
+    Otherwise a relative path needs the cwd, which may have been deleted;
+    a missing home directory raises too. Neither may fail the host.
+    """
+    try:
+        return resolve_session_file()
+    except Exception as exc:
+        logging.getLogger('jev_monitor').warning('cannot resolve session file, staying offline: %r', exc)
+        return None
+
+
 def _require_queue_size(queue_size: int) -> None:
     if isinstance(queue_size, bool) or not isinstance(queue_size, int) or queue_size < 1:
         raise ValueError('queue_size must be an integer >= 1')
 
 
 def _require_positive(name: str, value: float) -> None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
-        raise ValueError(f'{name} must be > 0')
+    try:
+        valid = not isinstance(value, bool) and isinstance(value, (int, float)) and value > 0 and math.isfinite(value)
+    except OverflowError:
+        # Integers too large to convert to the floats used by timers are invalid too.
+        valid = False
+    if not valid:
+        raise ValueError(f'{name} must be a finite number > 0')
+
+
+# Live senders in this process, for the fork hook below. Weak, so the
+# registry does not keep a sender alive.
+_SENDERS = weakref.WeakSet()
+
+
+def _after_fork_in_child() -> None:
+    for sender in list(_SENDERS):
+        try:
+            sender._reset_after_fork()
+        except Exception:
+            # One broken sender must not stop the others or fail the child.
+            pass
+
+
+# POSIX only. Windows has no fork, so nothing changes there.
+if hasattr(os, 'register_at_fork'):
+    os.register_at_fork(after_in_child=_after_fork_in_child)
 
 
 class MonitorSender:
@@ -182,6 +226,9 @@ class MonitorSender:
 
     `emit` uses `put_nowait`: it never blocks and never raises. `enabled=False`
     turns every method into a no-op that reports success without counting a drop.
+    In a forked child the sender becomes a new producer: new `producer_id`,
+    `sequence` from 1, empty queue and stats, and its own worker from the
+    first `emit`.
     """
 
     def __init__(
@@ -200,8 +247,9 @@ class MonitorSender:
         _require_positive('heartbeat_interval', heartbeat_interval)
         self.enabled = enabled
         self.run_id = run_id if run_id else _default_run_id()
-        self.producer_id = _producer_id(host_name if host_name is not None else '')
-        self.session_file = session_file if session_file is not None else resolve_paths()['session_file']
+        self._host_name = host_name if host_name is not None else ''
+        self.producer_id = _producer_id(self._host_name)
+        self.session_file: Optional[str] = session_file if session_file is not None else _default_session_file()
         self.timeout = timeout
         self.heartbeat_interval = heartbeat_interval
         self._queue: queue.Queue = queue.Queue(maxsize=queue_size)
@@ -222,14 +270,15 @@ class MonitorSender:
         # redirects so Authorization is not copied to a Location.
         self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _RejectRedirect)
         self._thread: Optional[threading.Thread] = None
+        _SENDERS.add(self)
         if enabled:
-            self._thread = threading.Thread(target=self._loop, name='jev-monitor-sender', daemon=True)
-            self._thread.start()
+            self._ensure_worker()
 
     def emit(self, type: str, payload: Optional[dict] = None, **ids: object) -> bool:
         if not self.enabled:
             return True
         try:
+            self._ensure_worker()
             return self._emit(type, payload, ids)
         except Exception:
             self._logger.warning('emit failed type=%s', type, exc_info=True)
@@ -258,6 +307,42 @@ class MonitorSender:
             self._wake.set()
             # Events still queued when the timeout ends are never sent. Count them as dropped.
             self._discard_queued()
+
+    def _ensure_worker(self) -> None:
+        # Started by __init__, and again on first use in a forked child.
+        if self._thread is not None:
+            return
+        with self._lock:
+            if self._thread is not None or self._closed:
+                return
+            thread = threading.Thread(target=self._loop, name='jev-monitor-sender', daemon=True)
+            thread.start()
+            self._thread = thread
+
+    def _reset_after_fork(self) -> None:
+        """Make the copy in a forked child a new producer.
+
+        Only the forking thread survives fork. Locks the worker held stay
+        held, so replace every lock, event, and the queue first. Queued
+        events belong to the parent, which still sends them. The protocol
+        wants one `producer_id` per process with its own `sequence`, so take a
+        new one from 1. The worker starts on the next `emit`, so a child that
+        only execs (subprocess `preexec_fn`) never starts a thread.
+        """
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._wake = threading.Event()
+        self._queue = queue.Queue(maxsize=self._queue.maxsize)
+        self._thread = None
+        self.producer_id = _producer_id(self._host_name)
+        self._sequence = 0
+        self._stats = {'sent': 0, 'dropped': 0, 'conflicts': 0, 'rejected': 0}
+        self._offline = bool(self.enabled)
+        self._unreported = 0
+        self._backoff = _BACKOFF_START
+        self._last_sent = time.monotonic()
+        self._session_mtime = object()
+        self._session = None
 
     def _discard_queued(self) -> None:
         discarded = 0
@@ -496,7 +581,7 @@ class MonitorSender:
                 event['sequence'] = self._sequence + 1
                 try:
                     # Freeze nested objects here. A later mutation, a set, a cycle,
-                    # a lone surrogate, or a body over 64 KiB must not reach `_post`.
+                    # NaN, a lone surrogate, or a body over 64 KiB must not reach `_post`.
                     raw = _snapshot_event(event)
                 except (TypeError, ValueError, RecursionError) as exc:
                     encode_error = exc
@@ -655,6 +740,8 @@ class MonitorSender:
         return event
 
     def _load_session(self, force: bool = False) -> Optional[dict]:
+        if self.session_file is None:
+            return None
         try:
             mtime = os.stat(self.session_file).st_mtime_ns
         except OSError:

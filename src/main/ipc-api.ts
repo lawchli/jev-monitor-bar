@@ -117,13 +117,14 @@ export function createMonitorHandlers(opts: MonitorHandlerOptions) {
       guard(event);
       const selected = await files.saveDialog(exportFileName(new Date()));
       if (!selected) return {saved: false};
-      const exported = opts.store ? opts.store.exportLines() : {text: '', skipped: 0};
+      const exported = opts.store ? opts.store.exportLines() : {text: '', skipped: 0, unreadable: 0};
       files.write(selected, exported.text);
       return {
         saved: true,
         path: selected,
         bytes: Buffer.byteLength(exported.text),
         skipped: exported.skipped,
+        unreadable: exported.unreadable,
       };
     },
     async openReplay(event: IpcSender, files: ReplayFileIO): Promise<ReplayData | null> {

@@ -164,9 +164,11 @@ if (timeline) {
 
 let checkpoints: Record<string, number> | undefined;
 if (timeline) {
-  // 只为统计读私有字段：检查点之间共用的对象只数一次。
-  const saved = (timeline as unknown as {checkpoints: Map<string, {decisions: object; attempts: object}>[]})
-    .checkpoints;
+  // 只为统计读私有字段：检查点之间共用的对象只数一次。检查点从 7aa03dd 起是 {runs, evicted}，更早是 Map。
+  type Saved = Map<string, {decisions: object; attempts: object}>;
+  const saved = (timeline as unknown as {checkpoints: (Saved | {runs: Saved})[]}).checkpoints.map(checkpoint =>
+    checkpoint instanceof Map ? checkpoint : checkpoint.runs,
+  );
   const runs = new Set<object>();
   const tables = new Set<object>();
   const entries = new Set<unknown>();

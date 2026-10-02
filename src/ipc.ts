@@ -65,6 +65,8 @@ export interface ExportResult {
   path?: string;
   bytes?: number;
   skipped?: number;
+  /** 读不了而略过的段文件数。 */
+  unreadable?: number;
 }
 
 export interface ReplayData {

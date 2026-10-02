@@ -56,14 +56,17 @@ test('ingest across rotations writes every line exactly once and opens each segm
     cursorsOnDisk(dir),
     Array.from({length: 30}, (_value, index) => index + 1),
   );
-  const segmentOpens = open.mock.calls.filter(call => String(call.arguments[0]).startsWith(dir));
+  const segmentOpens = open.mock.calls.filter(call =>
+    /^events-\d{8}\.jsonl$/.test(path.basename(String(call.arguments[0]))),
+  );
   assert.equal(segmentOpens.length, files.length);
-  // Every rotation closes the previous segment; the active one stays open until close().
-  assert.equal(close.mock.callCount(), files.length - 1);
+  // Reservation temp files close immediately; only the active segment stays open until close().
+  const totalOpens = open.mock.callCount();
+  assert.equal(close.mock.callCount(), totalOpens - 1);
   store.close();
-  assert.equal(close.mock.callCount(), files.length);
+  assert.equal(close.mock.callCount(), totalOpens);
   store.close();
-  assert.equal(close.mock.callCount(), files.length);
+  assert.equal(close.mock.callCount(), totalOpens);
 });
 
 test('restart after rotations recovers every retained event', () => {
@@ -262,3 +265,51 @@ test('dropped-run marks stay bounded and keep runs that are still listed', () =>
   assert.equal(store.historyTruncated({runId: 'run-ended-0', beforeCursor: 1}), false);
   assert.equal(store.historyTruncated({beforeCursor: 1}), true);
 });
+
+test('an unlinked active descriptor is replaced before acknowledging the next event', t => {
+  const dir = tempDir();
+  const store = new EventStore(dir);
+  store.ingest(event());
+  const stat = fs.fstatSync;
+  let removed = true;
+  t.mock.method(fs, 'fstatSync', ((fd: number, options?: fs.StatOptions) => {
+    const result = stat(fd, options);
+    if (removed) {
+      removed = false;
+      return {...result, nlink: 0};
+    }
+    return result;
+  }) as typeof fs.fstatSync);
+  assert.deepEqual(store.ingest(event()), {accepted: true, cursor: 2});
+  assert.equal(segments(dir).length, 2);
+  store.close();
+  const restored = new EventStore(dir);
+  assert.deepEqual(
+    restored.events.map(row => row.cursor),
+    [1, 2],
+  );
+  restored.close();
+});
+
+test(
+  'external deletion of the active segment does not send later acknowledged rows into an invisible file',
+  {
+    skip:
+      process.platform === 'win32' &&
+      'Windows normally refuses deleting an open descriptor; nlink handling is mocked above',
+  },
+  () => {
+    const dir = tempDir();
+    const store = new EventStore(dir);
+    store.ingest(event());
+    fs.unlinkSync(path.join(dir, segments(dir)[0]));
+    const second = event();
+    assert.deepEqual(store.ingest(second), {accepted: true, cursor: 2});
+    store.close();
+    assert.deepEqual(cursorsOnDisk(dir), [2]);
+    const restored = new EventStore(dir);
+    assert.equal(restored.events[0].event_id, second.event_id);
+    assert.equal(restored.cursor, 2);
+    restored.close();
+  },
+);

@@ -1,6 +1,5 @@
 import path from 'node:path';
-import {pathToFileURL} from 'node:url';
-import {app, session, type BrowserWindow} from 'electron';
+import {app, protocol, session, type BrowserWindow} from 'electron';
 import {resolveMonitorPaths} from '../paths';
 import {EventStore} from '../store';
 import {startServer} from '../server';
@@ -10,9 +9,12 @@ import {detectPlatform} from './platform';
 import {createMonitorWindow, loadMonitorWindow, type MonitorWindowController} from './window';
 import {registerIpc} from './ipc-handlers';
 import {armQuit, recordCleanupFailure} from './lifecycle';
+import {createRendererHandler, RENDERER_SCHEME, RENDERER_SCHEME_PRIVILEGES, RENDERER_URL} from './renderer-protocol';
 
 const paths = resolveMonitorPaths();
 app.setPath('userData', paths.electronProfileDir);
+// Custom scheme privileges must be registered before app ready (AUDIT L2).
+protocol.registerSchemesAsPrivileged([{scheme: RENDERER_SCHEME, privileges: {...RENDERER_SCHEME_PRIVILEGES}}]);
 
 let win: BrowserWindow | undefined;
 let closeServer: (() => Promise<void>) | undefined;
@@ -67,6 +69,8 @@ if (!app.requestSingleInstanceLock()) {
     });
     // Without this, navigator.permissions.query reports some permissions as granted.
     session.defaultSession.setPermissionCheckHandler(() => false);
+    // Serves only renderer build assets, including from app.asar in release packages.
+    protocol.handle(RENDERER_SCHEME, createRendererHandler(path.join(__dirname, 'renderer')));
     const created = createMonitorWindow({
       preload: path.join(__dirname, 'preload.cjs'),
       stateFile: paths.windowStateFile,
@@ -78,14 +82,13 @@ if (!app.requestSingleInstanceLock()) {
       url,
       dataDir: paths.home,
       corruptLines: store?.corruptLines ?? 0,
-      storageError,
+      storageError: storageError ?? store?.storageError,
       platform: detectPlatform(),
       mode: controller.getMode(),
       pinned: controller.getPinned(),
       startedAt,
     });
-    const rendererUrl = pathToFileURL(path.join(__dirname, 'renderer/index.html')).href;
-    registerIpc({store, controller, getStatus, rendererUrl, contents: win.webContents});
+    registerIpc({store, controller, getStatus, rendererUrl: RENDERER_URL, contents: win.webContents});
     loadMonitorWindow(win);
     if (!store) return;
     let timer: NodeJS.Timeout | undefined;

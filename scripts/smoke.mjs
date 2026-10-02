@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import {createRequire} from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
+import {pathToFileURL} from 'node:url';
 import {_electron, chromium} from 'playwright';
 import * as lib from './smoke-lib.mjs';
 import * as native from './smoke-native.mjs';
@@ -183,7 +184,7 @@ async function launchCdp(executablePath, args) {
     );
     browser = await chromium.connectOverCDP(endpoint, {timeout: 30_000});
     const context = browser.contexts()[0];
-    page = await poll(() => context.pages().find(item => item.url().startsWith('file:')), '渲染页面', 30_000);
+    page = await poll(() => context.pages().find(item => item.url() === lib.RENDERER_URL), '渲染页面', 30_000);
   } catch (error) {
     child.kill();
     throw error;
@@ -323,6 +324,7 @@ async function mainWindowInfo(driver) {
 /** 渲染进程能看到的窗口信息；CDP 模式只能靠它。 */
 async function rendererWindowInfo(page) {
   return page.evaluate(() => ({
+    href: location.href,
     bounds: {x: window.screenX, y: window.screenY, width: window.outerWidth, height: window.outerHeight},
     workArea: {x: screen.availLeft, y: screen.availTop, width: screen.availWidth, height: screen.availHeight},
     devicePixelRatio: window.devicePixelRatio,
@@ -331,6 +333,26 @@ async function rendererWindowInfo(page) {
     bridge: typeof window.monitor === 'object' && window.monitor !== null,
     mode: document.getElementById('app-root')?.dataset.mode,
   }));
+}
+
+/** Probe the former file:// script-loading hole with an actual local file (AUDIT L2). */
+async function localFileProbe(url) {
+  const script = await new Promise(resolve => {
+    const element = document.createElement('script');
+    element.src = url;
+    element.onload = () => resolve('load');
+    element.onerror = () => resolve('error');
+    setTimeout(() => resolve('timeout'), 3000);
+    document.head.append(element);
+  });
+  let fetched;
+  try {
+    const response = await fetch(url);
+    fetched = `status ${response.status}`;
+  } catch (error) {
+    fetched = `rejected: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  return {script, executed: window.__smokeFileProbe === true, fetch: fetched};
 }
 
 async function windowBounds(driver) {
@@ -658,6 +680,17 @@ async function run() {
     },
   );
   check('renderer.bridge', rendererInfo.bridge);
+  check('renderer.origin', rendererInfo.href === lib.RENDERER_URL, {href: rendererInfo.href});
+  await step('renderer.localFilesBlocked', async () => {
+    const probe = path.join(outDir, 'file-probe.js');
+    fs.writeFileSync(probe, 'window.__smokeFileProbe = true;\n');
+    const result = await page.evaluate(localFileProbe, pathToFileURL(probe).href);
+    check(
+      'renderer.localFilesBlocked',
+      result.script === 'error' && !result.executed && result.fetch.startsWith('rejected'),
+      result,
+    );
+  });
 
   if (options.native) {
     if (!nativeResults.supported) skip('native', `${process.platform} 暂未实现系统层探针`);

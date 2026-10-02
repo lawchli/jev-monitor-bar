@@ -84,7 +84,7 @@ export function selectRunToEvict<T extends {id: string; ended_at?: string; last_
 }
 export const MAX_RUNS = 200;
 // A sender left open after run.completed keeps sending heartbeats, so evicted runs are remembered well past MAX_RUNS.
-const MAX_EVICTED = 1000;
+export const MAX_EVICTED = 1000;
 /** What is kept of an evicted run. */
 export type EvictedRun = Pick<RunState, 'name' | 'simulated' | 'status' | 'started_at' | 'ended_at'>;
 /**
@@ -126,10 +126,78 @@ export function later(a: StoredEvent, b?: StoredEvent): boolean {
     (a.occurred_at === b.occurred_at && a.event_id > b.event_id)
   );
 }
+// bound() drops the key Object.keys would list first: array-index keys in ascending numeric order, then the others in
+// insertion order. Object.keys on every event costs tens of µs near 500 keys, so each table's key count, and once it
+// first exceeds 500 its key order, is kept here beside the table rather than on it: runs go over IPC and are compared
+// field by field. Only insert() adds keys and only bound() deletes them; a table seen for the first time (new, or
+// copied by the replay) is counted once.
+interface KeyOrder {
+  indices: number[]; // min-heap
+  names: string[]; // insertion order, deleted up to head
+  head: number;
+}
+const orders = new WeakMap<object, number | KeyOrder>();
+const isIndex = (key: string) => {
+  const n = Number(key);
+  return n >>> 0 === n && n !== 4294967295 && String(n) === key;
+};
+function remember(order: KeyOrder, key: string) {
+  if (!isIndex(key)) {
+    order.names.push(key);
+    return;
+  }
+  const heap = order.indices;
+  const n = Number(key);
+  let i = heap.push(n) - 1;
+  while (i > 0 && heap[(i - 1) >> 1] > n) {
+    heap[i] = heap[(i - 1) >> 1];
+    i = (i - 1) >> 1;
+  }
+  heap[i] = n;
+}
+function firstKey(order: KeyOrder): string {
+  const heap = order.indices;
+  if (heap.length === 0) {
+    const key = order.names[order.head++];
+    if (order.head * 2 > order.names.length) {
+      order.names = order.names.slice(order.head);
+      order.head = 0;
+    }
+    return key;
+  }
+  const top = heap[0];
+  const last = heap.pop()!;
+  let i = 0;
+  for (let child = 1; child < heap.length; child = 2 * i + 1) {
+    if (child + 1 < heap.length && heap[child + 1] < heap[child]) child++;
+    if (heap[child] >= last) break;
+    heap[i] = heap[child];
+    i = child;
+  }
+  if (heap.length > 0) heap[i] = last;
+  return String(top);
+}
+function insert<T>(map: Record<string, T>, key: string, value: T): T {
+  map[key] = value;
+  const order = orders.get(map);
+  if (typeof order === 'number') orders.set(map, order + 1);
+  else if (order) remember(order, key);
+  return value;
+}
 function bound<T>(map: Record<string, T>, run: RunState) {
-  const keys = Object.keys(map);
-  if (keys.length > 500) {
-    delete map[keys[0]];
+  let order = orders.get(map);
+  if (typeof order !== 'object') {
+    const count = order ?? Object.keys(map).length;
+    if (count <= 500) {
+      if (order === undefined) orders.set(map, count);
+      return;
+    }
+    order = {indices: [], names: [], head: 0};
+    for (const key of Object.keys(map)) remember(order, key);
+    orders.set(map, order);
+  }
+  if (order.indices.length + order.names.length - order.head > 500) {
+    delete map[firstKey(order)];
     run.limited = true;
   }
 }
@@ -152,13 +220,15 @@ export function applyEvent(r: RunState, e: StoredEvent) {
   if (e.type === 'progress.updated' && current) r.progress = e.payload;
   if (e.type === 'telemetry.dropped') r.dropped += e.payload.count ?? 0;
   if (e.type.startsWith('decision.') && e.decision_id) {
-    const d = (r.decisions[e.decision_id] ??= {
-      id: e.decision_id,
-      request_id: e.request_id,
-      question_id: e.question_id,
-      status: 'unknown',
-      payload: {},
-    });
+    const d =
+      r.decisions[e.decision_id] ??
+      insert(r.decisions, e.decision_id, {
+        id: e.decision_id,
+        request_id: e.request_id,
+        question_id: e.question_id,
+        status: 'unknown',
+        payload: {},
+      });
     if (d.request_id !== e.request_id || d.question_id !== e.question_id) {
       r.anomalies++;
       return;
@@ -174,12 +244,14 @@ export function applyEvent(r: RunState, e: StoredEvent) {
   }
   if (e.action_id && e.attempt_id) {
     const key = JSON.stringify([e.action_id, e.attempt_id]);
-    const a = (r.attempts[key] ??= {
-      id: e.attempt_id,
-      action_id: e.action_id,
-      decision_id: e.decision_id,
-      status: 'unknown',
-    });
+    const a =
+      r.attempts[key] ??
+      insert(r.attempts, key, {
+        id: e.attempt_id,
+        action_id: e.action_id,
+        decision_id: e.decision_id,
+        status: 'unknown',
+      });
     if (a.decision_id && e.decision_id && a.decision_id !== e.decision_id) {
       r.anomalies++;
       return;

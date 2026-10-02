@@ -104,7 +104,8 @@ export function App({bridge}: {bridge: MonitorBridge}) {
           if (result.saved) {
             const name = result.path ? fileBase(result.path) : '文件';
             const skipped = result.skipped ? `，跳过 ${result.skipped} 行` : '';
-            setExportNote(`已导出 ${name}（${result.bytes ?? 0} 字节${skipped}）`);
+            const unreadable = result.unreadable ? `，${result.unreadable} 个段文件读不了` : '';
+            setExportNote(`已导出 ${name}（${result.bytes ?? 0} 字节${skipped}${unreadable}）`);
           } else {
             setExportNote('已取消导出');
           }

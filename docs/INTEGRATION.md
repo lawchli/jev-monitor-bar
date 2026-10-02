@@ -312,7 +312,7 @@ sender.emit(
 ## 4. 不要发送的内容
 
 - 不要发 API key（包括 `TYPESAFE_API_KEY`）、`Authorization` 头、cookie、密码、环境变量、原始 prompt 或原始输入。只发摘要和必要字段。
-- 接收端的脱敏是兜底，不是保证。自由文本只替换这几种写法：`Bearer <凭证>`；`sk-`、`ts-`、`key-`（或 `_`）后接至少 12 位；`api_key`、`password`、`secret`、`token`、`authorization` 用 `=` 或 `:` 带出的值。其他格式，例如 `ghp_` 开头的令牌，会原样保存。
+- 接收端的脱敏是兜底，不是保证。自由文本只替换这几类写法（完整列表见 [`docs/PROTOCOL.md`](PROTOCOL.md)「更正（2026-10-01，脱敏与被淘汰的 run）」）：`Bearer <凭证>` 与 `Authorization: Basic <凭证>`；`sk-`、`ts-`、`key-`（或 `_`）后接至少 12 位；`api_key`、`password`、`secret`、`token`、`authorization` 等键用 `=` 或 `:` 带出的值，键和值可以带引号，键可以是 `AWS_SECRET_ACCESS_KEY`、`client_secret` 这样的复合名；`Cookie:` 整行；URL 里的 `user:pass@`；GitHub、GitLab、Slack、AWS 访问密钥 ID、Google、npm、Hugging Face 的令牌格式；JWT；PEM 私钥。其他写法，例如句子里随手写的密码或 `密码：…`，会原样保存。
 - 对象里键名像 authorization、cookie、password、secret、token、api key、credential、environment、`env`、raw input、prompt、`state` 的，整个值换成 `[REDACTED]`。payload 的顶层字段由 schema 固定，这条实际作用于 `diagnostic` 这类嵌套对象。
 - `candidates`、`probabilities`、`legend`、`usage` 的键是候选名，不按键名脱敏，否则候选和概率就对不上了。只对值做文本脱敏。这些键会原样出现在界面和导出里，不要把秘密放进候选名或 legend 的键。
 - ID、`type`、`sequence` 和时间不做任何处理。不要把秘密或个人信息放进 ID。
@@ -518,7 +518,7 @@ pnpm demo:host --home <数据目录的绝对路径> --fast --once
 - 第 3 节的片段放进同一个 run，3.13 与 3.9 各一次：22 条全部 `sent`。判断 3 个 `selected`、1 个 `failed`；尝试 `act-stop` 为 `selected`，`act-2` 为 `unknown`，`act-3/try-1` 为 `failed`，`act-3/try-2` 为 `unverified`；`anomalies` 为 0。
 - 第 5 节的 Node 示例：三条都是 200 `accepted:true`。curl 覆盖了表里的 200（新事件与重复）、409、两种 400、401、403、404、413（带与不带 `Content-Length`）、415。把当前段文件设为只读得到 503，恢复后同一个 `event_id` 被接受。正文发一半不再发，约 10.7 秒后得到 408。不带 `Bearer ` 前缀的 token 通过了健康检查；小写 `bearer` 得到 401。这两条是修复前的结果：之后接收端改为必须带 `Bearer ` 前缀，并把 Node 的超时检查间隔改为 0.5 秒（见 `docs/PROTOCOL.md`「更正（2026-09-30）」），`tests/core.test.ts` 覆盖了这两处。
 - 停掉接收端，再用同一目录重启（新端口、新 token）：发送器（`queue_size=5`）离线期间丢了 19 条，恢复后先发 `telemetry.dropped` `count=19`，其余 34 条全部写入，run 的 `dropped` 为 19。
-- 第 4 节的脱敏（全用假值）：候选名 `password` 和 `sk-…` 原样保留，值被替换；`ghp_…` 没有被替换；`diagnostic` 被删掉。
+- 第 4 节的脱敏（全用假值）：候选名 `password` 和 `sk-…` 原样保留，值被替换；`ghp_…` 没有被替换；`diagnostic` 被删掉。这是 2026-10-01 修复前的结果：之后 `ghp_…` 也被替换（`tests/redact.test.ts`）。
 - 没有接收端时：`queue_size=3` 下 5 次调用返回 True、True、True、False、False，共约 0.3 ms；`close(timeout=0.3)` 用了约 310 ms，之后 `dropped` 仍为 2。这是修复前的结果：之后 `close` 改为把队列里剩下的 3 条计入 `dropped`，同样条件下为 5（`test_close_timeout_counts_unsent_events_as_dropped`）。
 - `python/examples/fake_host.py` 与 `pnpm demo:host --fast --once` 对同一个接收端：4 个与 7 个模拟运行的最终状态与预期一致。
 

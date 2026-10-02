@@ -73,7 +73,7 @@ test('a locked old segment does not fail ingestion', t => {
   assert.ok(unlink.mock.callCount() > 0);
   unlink.mock.restore();
   store.ingest(ev('heartbeat'));
-  assert.equal(fs.readdirSync(store.directory).length, 1);
+  assert.equal(fs.readdirSync(store.directory).filter(name => /^events-\d{8}\.jsonl$/.test(name)).length, 1);
 });
 
 test('candidate names that look sensitive survive sanitizing and restart', () => {

@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | M0 | 核实 TypeSafe 接口、参考项目与技术选型 | 完成（记录 01） |
 | M1 | 协议、接收、持久化、状态聚合、脱敏；单元测试与三平台 CI | 集成分支已有核心模块、JSON Schema、协议文档与模拟场景（记录 08）。协议与审计里过时的句子在记录 A10 更正。A1–A8 已在集成分支修复（记录 09、10、A8），闭环验收在 Linux 窗口完成（记录 11），三平台 CI 通过（记录 13）。A9 留到 M5 |
-| M2 | Electron 主进程、平台模块、preload、Windows 置顶小窗 | 集成分支已有主进程、平台模块、preload 与窗口位置恢复（记录 08）。原生 Windows 窗口未验证 |
+| M2 | Electron 主进程、平台模块、preload、Windows 置顶小窗 | 主进程、平台模块、preload 与窗口位置恢复已集成（记录 08）；Windows 11 窗口置顶、恢复与 200% 缩放见记录 29–31。启动时不抢焦点、混合 DPI 与本轮修复后的实机复测仍待补齐 |
 | M3 | 紧凑/展开 UI、详情、时间线、断线提示、导出与回放 | 集成分支已有紧凑条、展开视图、导出与回放（记录 08） |
 | M4 | Python 发送器、示例宿主、`pnpm demo` | 集成分支已有 Python 发送器、示例宿主与 `pnpm demo`（记录 08） |
 | M5 | 接入文档、延迟与负载测试、Windows 实机验证与打包；macOS/Linux 适配 | 进行中：接入文档（记录 16）、目录 zip 打包与读回核对（记录 18、22）、桌面冒烟测试与可见延迟（macOS 与 Windows Server runner，记录 19、20、24）、30 分钟合成负载（macOS，记录 23）、写盘与回放后续（记录 26、27）、合并前审计（记录 28）已完成；Windows 11 实机上自动检查、打包、发布包启动、负载与 200% 缩放已通过（记录 29–31）；PR #14、#15 已合入 main。启动时不抢焦点的实机确认、Defender 扫描、干净机器解压即用未完成 |
@@ -835,3 +835,16 @@
   - 关闭后 110 ms 退出，`session.json` 被删除，没有残留进程。
 - 未验证：启动时不抢焦点、整屏截图里监视窗口叠在记事本上——检查开始时远程桌面会话是 Active，运行中断开（Disc），`GetForegroundWindow` 为 0、`CopyFromScreen` 失败。Defender 扫描（实时保护关闭）、干净机器解压即用。取证文件（`docs/reports/2026-09-30-windows/`）还在 PC 的工作区里未提交，等用户在那边的会话里批准提交。
 - 遗留：同上「未验证」；审计后续项见 `docs/AUDIT.md`。
+
+## 32 — 补记 M2/M3 修复与 Linux 接手验证
+
+- 日期：2026-10-02
+- harness：codex
+- model：unknown
+- 提交：修复 `7aa03dd`（claude-code/claude-opus）；文档见本条所在提交
+- 内容：
+  - 补记 `7aa03dd`：自由文本脱敏补齐带引号键值、复合键名、常见令牌、JWT、URL 用户信息、Cookie、PEM 与 Authorization 方案；处理结果幂等，保留协议长度约束。
+  - 被淘汰 run 的名字、模拟标记、状态和起止时间最多保留 1000 条；迟到事件恢复已结束状态，不再把已结束的任务重建成运行中。实时和回放采用相同规则。
+  - 保留并纳入原工作区已暂存的 `docs/INTEGRATION.md`、`docs/PROTOCOL.md` 更正，原文历史保留。
+- 验证：Linux x64、Node 22.23.2、Python 3.13.5，对接手基线 `7aa03dd` 实跑 `pnpm format:check`、`pnpm typecheck`、`pnpm test`（195/195）及 Python unittest（21/21）通过。HTTP/socket 测试在沙箱外运行；受沙箱限制的首次失败不记为应用缺陷。
+- 遗留：本次基线未在 Windows/macOS 重测；后续剩余审计项与集成验证单独记入下一条记录。

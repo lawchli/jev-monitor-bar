@@ -172,10 +172,9 @@ export const FUSE_SETTINGS = Object.freeze({
   OnlyLoadAppFromAsar: true,
   // 默认值：不用浏览器进程专用 V8 快照。
   LoadBrowserProcessSpecificV8Snapshot: false,
-  // 保持默认开启。关掉后 file:// 改走 Chromium 自带处理，不再读 app.asar 内部，
-  // loadFile(app.asar/dist/renderer/index.html) 得到 ERR_FILE_NOT_FOUND（2026-09-30 在 macOS arm64 打包实测）。
-  // 要关掉它，渲染页得先改成自定义协议（protocol.handle）加载。
-  GrantFileProtocolExtraPrivileges: true,
+  // 渲染页改由 app://renderer 加载，主进程通过 fs 读取 ASAR 内受限的静态资源（AUDIT L2）。
+  // file:// 不需要额外特权，也不能再直接读取 app.asar 内部。
+  GrantFileProtocolExtraPrivileges: false,
   // 默认值：保留 WebAssembly trap handler。
   WasmTrapHandlers: true,
 });

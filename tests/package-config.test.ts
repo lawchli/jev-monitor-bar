@@ -200,8 +200,8 @@ test('fuse config sets every known fuse and closes the debug entry points', asyn
   assert.equal(value('EnableNodeCliInspectArguments'), false);
   assert.equal(value('EnableEmbeddedAsarIntegrityValidation'), true);
   assert.equal(value('OnlyLoadAppFromAsar'), true);
-  // The renderer loads file://…/app.asar/…; turning this off gives ERR_FILE_NOT_FOUND.
-  assert.equal(value('GrantFileProtocolExtraPrivileges'), true);
+  // The renderer loads app://renderer, so file:// no longer needs extra privileges (AUDIT L2).
+  assert.equal(value('GrantFileProtocolExtraPrivileges'), false);
   assert.equal(
     config.fuseConfig(FuseV1Options, {version: FuseVersion.V1, resetAdHocDarwinSignature: true})
       .resetAdHocDarwinSignature,
@@ -225,10 +225,12 @@ test('fuse mismatches read the wire character codes', async () => {
   wire[FuseV1Options.RunAsNode as number] = 49;
   wire[FuseV1Options.OnlyLoadAppFromAsar as number] = 114;
   delete wire[FuseV1Options.EnableNodeCliInspectArguments as number];
+  wire[FuseV1Options.GrantFileProtocolExtraPrivileges as number] = 49;
   assert.deepEqual(config.fuseMismatches(FuseV1Options, wire), [
     'RunAsNode: expected false, got true',
     'EnableNodeCliInspectArguments: expected false, got missing',
     'OnlyLoadAppFromAsar: expected true, got r',
+    'GrantFileProtocolExtraPrivileges: expected false, got true',
   ]);
 });
 

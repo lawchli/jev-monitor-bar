@@ -1,12 +1,15 @@
 import json
 import os
 import shutil
+import signal
 import sys
 import tempfile
 import threading
 import time
 import unittest
+import warnings
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from unittest import mock
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
@@ -145,6 +148,19 @@ def wait_until(predicate, timeout=5.0):
             return True
         time.sleep(0.02)
     return False
+
+
+def wait_child(pid, timeout):
+    """Exit status of a forked child, or None after killing one that hung."""
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        done, status = os.waitpid(pid, os.WNOHANG)
+        if done:
+            return status
+        time.sleep(0.02)
+    os.kill(pid, signal.SIGKILL)
+    os.waitpid(pid, 0)
+    return None
 
 
 class SenderTest(unittest.TestCase):
@@ -353,6 +369,16 @@ class SenderTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 MonitorSender(enabled=False, session_file=self.session_path, **kwargs)
 
+    def test_nonfinite_time_parameters_raise_before_starting_worker(self):
+        for name in ('timeout', 'heartbeat_interval'):
+            for value in (float('nan'), float('inf'), float('-inf')):
+                for enabled in (False, True):
+                    with self.subTest(parameter=name, value=value, enabled=enabled):
+                        with mock.patch('jev_monitor.sender.threading.Thread') as worker:
+                            with self.assertRaises(ValueError):
+                                MonitorSender(enabled=enabled, session_file=self.session_path, **{name: value})
+                            worker.assert_not_called()
+
     def test_recovery_sends_telemetry_dropped_first(self):
         server = RecordingServer()
         self.server = server
@@ -479,6 +505,29 @@ class SenderTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             _snapshot_event(over)
 
+    def test_nonfinite_numbers_are_rejected_before_enqueueing(self):
+        server = self._start_server()
+        self.sender = MonitorSender(session_file=self.session_path, heartbeat_interval=60)
+        payloads = (
+            {'completed': float('nan')},
+            {'probabilities': {'a': float('inf')}},
+            {'latency_ms': float('-inf')},
+            {'diagnostic': [0, {'nested': float('nan')}]},
+        )
+        with self.assertLogs('jev_monitor', level='WARNING'):
+            for payload in payloads:
+                self.assertFalse(self.sender.emit('progress.updated', payload))
+        self.assertEqual(self.sender.stats()['dropped'], len(payloads))
+        self.assertEqual(server.posts, 0)
+        self.assertTrue(self.sender._thread.is_alive())
+        self.assertTrue(self.sender.emit('progress.updated', {'summary': 'finite', 'completed': 1}))
+        self.sender.close(timeout=3)
+        self.assertEqual(self.sender.stats()['sent'], 1)
+        # Rejected numbers neither consume a sequence nor create a telemetry event.
+        events = server.snapshot()
+        self.assertEqual([(event['type'], event['sequence']) for event in events], [('progress.updated', 1)])
+        self.assertEqual(events[0]['payload']['summary'], 'finite')
+
     def test_event_post_does_not_follow_redirects(self):
         server = self._start_server()
         self.target = RecordingServer()
@@ -549,6 +598,157 @@ class SenderTest(unittest.TestCase):
         self.assertFalse(self.sender.emit('decision.started', {'kind': 'choice'}))
         self.assertFalse(self.sender.emit('action.selected', {'action': 'go'}, action_id='a'))
         self.assertGreaterEqual(self.sender.stats()['dropped'], 3)
+
+    def test_deleted_cwd_does_not_raise(self):
+        server = self._start_server()
+        gone = os.path.join(self.tmp, 'gone')
+        os.mkdir(gone)
+        previous = os.getcwd()
+        os.chdir(gone)
+        offline = None
+        default = None
+        try:
+            try:
+                os.rmdir(gone)
+            except OSError:
+                self.skipTest('this platform cannot remove the current directory')
+            with mock.patch.dict(os.environ):
+                os.environ.pop('JEV_MONITOR_HOME', None)
+                os.environ.pop('JEV_MONITOR_SESSION', None)
+                # The platform default is independent of the deleted cwd too.
+                default = MonitorSender(heartbeat_interval=60)
+                self.assertIsNotNone(default.session_file)
+                # An absolute session path does not need the current directory.
+                os.environ['JEV_MONITOR_SESSION'] = self.session_path
+                self.sender = MonitorSender(heartbeat_interval=60)
+                # A relative one cannot be resolved, so that sender stays offline.
+                os.environ['JEV_MONITOR_SESSION'] = 'session.json'
+                with self.assertLogs('jev_monitor', level='WARNING'):
+                    offline = MonitorSender(heartbeat_interval=60)
+            self.assertEqual(self.sender.session_file, self.session_path)
+            self.assertIsNone(offline.session_file)
+            self.assertTrue(offline.emit('progress.updated', {'summary': 'offline'}))
+            self.assertTrue(self.sender.emit('progress.updated', {'summary': 'sent'}))
+            self.assertTrue(wait_until(lambda: self.sender.stats()['sent'] == 1, timeout=4))
+            time.sleep(0.3)
+            self.assertEqual([event['payload']['summary'] for event in server.snapshot()], ['sent'])
+            self.assertTrue(offline.stats()['offline'])
+            self.assertTrue(offline._thread.is_alive())
+        finally:
+            os.chdir(previous)
+            if offline is not None:
+                offline.close(timeout=0.2)
+            if default is not None:
+                default.close(timeout=0.2)
+
+    def test_absolute_session_works_with_relative_home_and_deleted_cwd(self):
+        server = self._start_server()
+        gone = os.path.join(self.tmp, 'gone')
+        os.mkdir(gone)
+        previous = os.getcwd()
+        os.chdir(gone)
+        try:
+            try:
+                os.rmdir(gone)
+            except OSError:
+                self.skipTest('this platform cannot remove the current directory')
+            with mock.patch.dict(os.environ, {
+                'JEV_MONITOR_HOME': 'relative-home',
+                'JEV_MONITOR_SESSION': self.session_path,
+            }):
+                self.sender = MonitorSender(heartbeat_interval=60)
+            self.assertEqual(self.sender.session_file, self.session_path)
+            self.assertTrue(self.sender.emit('progress.updated', {'summary': 'absolute-session'}))
+            self.sender.close(timeout=3)
+            self.assertEqual(self.sender.stats()['sent'], 1)
+            self.assertEqual(self.sender.stats()['dropped'], 0)
+            self.assertEqual([event['payload']['summary'] for event in server.snapshot()], ['absolute-session'])
+        finally:
+            os.chdir(previous)
+
+    @unittest.skipUnless(hasattr(os, 'fork'), 'os.fork is not available')
+    def test_forked_child_is_a_new_producer(self):
+        server = RecordingServer()
+        self.server = server
+        self.sender = MonitorSender(session_file=self.session_path, heartbeat_interval=60)
+        # No session file yet, so this event is still queued at fork time.
+        self.assertTrue(self.sender.emit('progress.updated', {'summary': 'parent-before'}))
+        # Every synchronization primitive can be held by a vanished worker.
+        locks = [self.sender._lock, self.sender._queue.mutex, self.sender._stop._cond, self.sender._wake._cond]
+        for lock in locks:
+            lock.acquire()
+        try:
+            with warnings.catch_warnings():
+                # Python 3.12+ warns about fork in a multi-threaded process.
+                warnings.simplefilter('ignore', DeprecationWarning)
+                pid = os.fork()
+            if pid == 0:
+                code = 1
+                try:
+                    ok = self.sender.emit('progress.updated', {'summary': 'child'})
+                    self.sender.close(timeout=5)
+                    stats = self.sender.stats()
+                    code = 0 if ok and stats['sent'] == 1 and stats['dropped'] == 0 else 2
+                except BaseException:
+                    code = 3
+                finally:
+                    os._exit(code)
+        finally:
+            for lock in reversed(locks):
+                lock.release()
+        write_session(self.session_path, server.port, server.token)
+        self.assertTrue(self.sender.emit('progress.updated', {'summary': 'parent-after'}))
+        status = wait_child(pid, timeout=10)
+        self.assertIsNotNone(status, 'forked child hung')
+        self.assertEqual(os.waitstatus_to_exitcode(status), 0)
+        self.assertTrue(wait_until(lambda: len(server.snapshot()) >= 3, timeout=4))
+        time.sleep(0.2)
+        events = server.snapshot()
+        parent_id = self.sender.producer_id
+        parent = [(event['payload']['summary'], event['sequence']) for event in events if event['producer_id'] == parent_id]
+        child = [event for event in events if event['producer_id'] != parent_id]
+        # The child does not resend what the parent had queued.
+        self.assertEqual(parent, [('parent-before', 1), ('parent-after', 2)])
+        self.assertEqual([(event['payload']['summary'], event['sequence']) for event in child], [('child', 1)])
+        self.assertTrue(child[0]['producer_id'].startswith(f'host-{pid}-'))
+        self.assertEqual(child[0]['run_id'], self.sender.run_id)
+        self.assertEqual(self.sender.stats()['sent'], 2)
+
+    @unittest.skipUnless(hasattr(os, 'fork'), 'os.fork is not available')
+    def test_fork_preserves_disabled_and_closed_state(self):
+        for enabled in (False, True):
+            with self.subTest(enabled=enabled):
+                self.sender = MonitorSender(enabled=enabled, session_file=self.session_path, heartbeat_interval=60)
+                if enabled:
+                    self.sender.close(timeout=0.2)
+                lock = self.sender._lock
+                lock.acquire()
+                try:
+                    with warnings.catch_warnings():
+                        warnings.simplefilter('ignore', DeprecationWarning)
+                        pid = os.fork()
+                    if pid == 0:
+                        code = 1
+                        try:
+                            ok = self.sender.emit('heartbeat')
+                            stats = self.sender.stats()
+                            self.sender.close(timeout=0.1)
+                            code = 0 if (
+                                ok == (not enabled)
+                                and stats['sent'] == 0
+                                and stats['dropped'] == int(enabled)
+                                and stats['offline'] == enabled
+                                and self.sender._thread is None
+                            ) else 2
+                        except BaseException:
+                            code = 3
+                        finally:
+                            os._exit(code)
+                finally:
+                    lock.release()
+                status = wait_child(pid, timeout=5)
+                self.assertIsNotNone(status, 'closed or disabled sender hung in child')
+                self.assertEqual(os.waitstatus_to_exitcode(status), 0)
 
     def test_disabled_sender_is_noop(self):
         self.sender = MonitorSender(enabled=False, session_file=self.session_path)

@@ -1,7 +1,7 @@
-import path from 'node:path';
 import {app, BrowserWindow, screen} from 'electron';
 import type {WindowMode} from '../ipc';
 import {detectPlatform, platformProfile} from './platform';
+import {RENDERER_URL} from './renderer-protocol';
 import {
   boundsEcho,
   defaultWindowState,
@@ -234,7 +234,7 @@ export function createMonitorWindow(opts: MonitorWindowOptions): {
   win.webContents.on('will-navigate', event => {
     event.preventDefault();
   });
-  // `'self'` on a file:// page matches any local file, so no frame may navigate either. loadFile is not affected.
+  // No frame may navigate; CSP frame-src 'none' also blocks subframes. Programmatic loadURL is not affected.
   win.webContents.on('will-frame-navigate', event => {
     event.preventDefault();
   });
@@ -265,7 +265,7 @@ export function createMonitorWindow(opts: MonitorWindowOptions): {
   return {win, controller};
 }
 
-/** Load only after IPC handlers for this window are registered. */
+/** Load only after IPC handlers and the app:// protocol handler are registered. */
 export function loadMonitorWindow(win: BrowserWindow) {
-  void win.loadFile(path.join(__dirname, 'renderer/index.html'));
+  void win.loadURL(RENDERER_URL);
 }

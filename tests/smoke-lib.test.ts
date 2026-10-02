@@ -6,6 +6,7 @@ import {pathToFileURL} from 'node:url';
 import {validateEvent} from '../src/protocol';
 import {sanitizeEvent} from '../src/redact';
 import {applyEvent, emptyRun, labels, metrics} from '../src/state';
+import {RENDERER_URL} from '../src/main/renderer-protocol';
 import type {StoredEvent} from '../src/protocol';
 
 const root = path.resolve(__dirname, '..');
@@ -46,6 +47,7 @@ interface Expectation {
 }
 interface SmokeLib {
   LATENCY_THRESHOLD_MS: number;
+  RENDERER_URL: string;
   statusLabels: Record<string, string>;
   executedWords: string[];
   successWords: string[];
@@ -230,6 +232,11 @@ test('fuse wire is read after the sentinel', async () => {
 test('status labels match the state module', async () => {
   const lib = await load();
   for (const [status, label] of Object.entries(lib.statusLabels)) assert.equal(label, labels[status], status);
+});
+
+test('the smoke test looks for the URL the main process loads', async () => {
+  const lib = await load();
+  assert.equal(lib.RENDERER_URL, RENDERER_URL);
 });
 
 test('closed-loop events are valid protocol events with the intended states', async () => {

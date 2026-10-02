@@ -23,16 +23,20 @@ def resolve_paths(
     homedir: Optional[str] = None,
     cwd: Optional[str] = None,
 ) -> dict:
-    """Return home, events_dir, session_file, and window_state_file."""
+    """Return home, events_dir, session_file, and window_state_file.
+
+    The current directory is read only for a relative override. A deleted
+    current directory then raises `FileNotFoundError`; other inputs do not
+    depend on it.
+    """
     system = sys.platform if platform is None else platform
     values: Mapping[str, str] = os.environ if env is None else env
     home_dir = str(Path.home()) if homedir is None else homedir
-    workdir = os.getcwd() if cwd is None else cwd
     path_api = ntpath if system == 'win32' else posixpath
-    home = _resolve_home(path_api, system, values, home_dir, workdir)
+    home = _resolve_home(path_api, system, values, home_dir, cwd)
     session_override = values.get('JEV_MONITOR_SESSION')
     if _nonempty(session_override):
-        session_file = _resolve_input(path_api, workdir, session_override)
+        session_file = _resolve_input(path_api, cwd, session_override)
     else:
         session_file = path_api.normpath(path_api.join(home, 'session.json'))
     return {
@@ -43,17 +47,38 @@ def resolve_paths(
     }
 
 
+def resolve_session_file(
+    platform: Optional[str] = None,
+    env: Optional[Mapping[str, str]] = None,
+    homedir: Optional[str] = None,
+    cwd: Optional[str] = None,
+) -> str:
+    """Resolve only the sender's session path.
+
+    An explicit session override is independent of the data home. Resolving
+    the full path set still requires a valid cwd for a relative home.
+    """
+    system = sys.platform if platform is None else platform
+    values: Mapping[str, str] = os.environ if env is None else env
+    override = values.get('JEV_MONITOR_SESSION')
+    if _nonempty(override):
+        path_api = ntpath if system == 'win32' else posixpath
+        return _resolve_input(path_api, cwd, override)
+    return resolve_paths(platform=system, env=values, homedir=homedir, cwd=cwd)['session_file']
+
+
 def _nonempty(value: Optional[str]) -> bool:
     return bool(value)
 
 
-def _resolve_input(path_api, cwd: str, value: str) -> str:
+def _resolve_input(path_api, cwd: Optional[str], value: str) -> str:
     if path_api.isabs(value):
         return path_api.normpath(value)
-    return path_api.normpath(path_api.join(cwd, value))
+    base = os.getcwd() if cwd is None else cwd
+    return path_api.normpath(path_api.join(base, value))
 
 
-def _resolve_home(path_api, system: str, env: Mapping[str, str], homedir: str, cwd: str) -> str:
+def _resolve_home(path_api, system: str, env: Mapping[str, str], homedir: str, cwd: Optional[str]) -> str:
     override = env.get('JEV_MONITOR_HOME')
     if _nonempty(override):
         return _resolve_input(path_api, cwd, override)

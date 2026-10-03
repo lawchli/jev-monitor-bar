@@ -312,7 +312,7 @@ sender.emit(
 ## 4. 不要发送的内容
 
 - 不要发 API key（包括 `TYPESAFE_API_KEY`）、`Authorization` 头、cookie、密码、环境变量、原始 prompt 或原始输入。只发摘要和必要字段。
-- 接收端的脱敏是兜底，不是保证。自由文本只替换这几种写法：`Bearer <凭证>`；`sk-`、`ts-`、`key-`（或 `_`）后接至少 12 位；`api_key`、`password`、`secret`、`token`、`authorization` 用 `=` 或 `:` 带出的值。其他格式，例如 `ghp_` 开头的令牌，会原样保存。
+- 接收端的脱敏是兜底，不是保证。除原有 `Bearer`、`sk-` / `ts-` / `key-` 和敏感字段赋值外，现在也处理带引号和转义字符的 JSON / Python repr 值、Basic 认证、Cookie 头、常见 GitHub / Slack / AWS 令牌、JWT、URL 用户凭证和 PEM 私钥。具体匹配范围见 [`PROTOCOL.md`](PROTOCOL.md#补充2026-10-04m2-自由文本脱敏)；其他格式、编码或秘密放在 ID / 字典键里的情况仍可能原样保存。发送端应先移除秘密。
 - 对象里键名像 authorization、cookie、password、secret、token、api key、credential、environment、`env`、raw input、prompt、`state` 的，整个值换成 `[REDACTED]`。payload 的顶层字段由 schema 固定，这条实际作用于 `diagnostic` 这类嵌套对象。
 - `candidates`、`probabilities`、`legend`、`usage` 的键是候选名，不按键名脱敏，否则候选和概率就对不上了。只对值做文本脱敏。这些键会原样出现在界面和导出里，不要把秘密放进候选名或 legend 的键。
 - ID、`type`、`sequence` 和时间不做任何处理。不要把秘密或个人信息放进 ID。
@@ -523,3 +523,7 @@ pnpm demo:host --home <数据目录的绝对路径> --fast --once
 - `python/examples/fake_host.py` 与 `pnpm demo:host --fast --once` 对同一个接收端：4 个与 7 个模拟运行的最终状态与预期一致。
 
 没有在 Windows 或 Linux 上跑这些示例，也没有经过 Electron 窗口。
+
+### 更正（2026-10-04，M2 自由文本脱敏）
+
+上一节的 `ghp_…` 未替换是 2026-09-30 的历史结果，保留原记录。现在符合 [`PROTOCOL.md`](PROTOCOL.md) 文末匹配范围的 GitHub 令牌及其他新增凭证形式会替换。Linux 回归测试覆盖新事件入库、重启、导出、回放，以及旧日志读取时脱敏；没有重跑上面各平台接入示例或桌面窗口验证。

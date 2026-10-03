@@ -194,7 +194,7 @@ run：
 
 入库前只处理 payload。各种 ID、`type`、`sequence` 和时间不改。
 
-- 自由文本里，`Bearer` 后面的凭证、`sk-` / `ts-` / `key-` 后接至少 12 位的记号，以及 `api_key`、`password`、`secret`、`token`、`authorization` 用 `=` 或 `:` 带上的值，换成 `[REDACTED]`。
+- 自由文本脱敏的当前规则见文末「补充（2026-10-04，M2 自由文本脱敏）」。原有 `Bearer`、`sk-` / `ts-` / `key-` 和敏感字段赋值规则仍保留，并补上常见的带引号凭证、认证头和令牌格式。
 - 对象的键名若匹配 authorization、cookie、password、secret、token、api key、credential、environment、`env`、raw input、prompt、`state`，整个值换成 `[REDACTED]`。
 - `candidates`、`probabilities`、`legend`、`usage` 的键是调用方起的名字，不按键名替换，只对值做文本脱敏。`usage` 走 `dictionary(num)`，值必须是 ≥0 的数字。非数字值在入口 `validateEvent` 失败，整条事件被拒绝，不是脱敏时静默丢掉该字段。
 - 默认删掉 `diagnostic`。只有 `EventStore` 以诊断模式构造时才保留，并按键名和内容脱敏。
@@ -245,3 +245,17 @@ C10 改动之后，上文「会话文件与数据目录」和「补充」里关�
 - 轮转与保留：换段条件、每次启动新开一段、只保留最近 8 段都不变。旧段只在启动时和每个新段写入第一行之后清理，不再每条事件列一次目录。删除遇到文件占用（`ENOENT` 以外的错误）时，至少 1 秒后的下一条写入再列目录重试。
 - 关闭：桌面退出时先关接收端，再关当前段。
 - 当前段打开期间如果被其他程序删除或移走，之后的行会写进已经不在目录里的文件，直到下一次换段；改动前每条事件都按路径重新打开。
+
+## 补充（2026-10-04，M2 自由文本脱敏）
+
+这里的 M2 是 `docs/AUDIT.md` 的问题编号。`src/redact.ts` 现在处理以下自由文本形式：
+
+- `api_key`（也支持 `api-key` / `apikey`）、`password`、`secret`、`token`、`authorization`、`cookie`、`AWS_SECRET_ACCESS_KEY` 用 `=` 或 `:` 带出的值；支持单引号、双引号与反斜杠转义，保留引号和相邻字段。支持带标识符前缀的名字，例如 `TYPESAFE_API_KEY`、`access_token`、`client_secret`。普通未加引号的值止于空白或分隔符，不能依赖它隐藏带空格的整段秘密。
+- `Authorization: Basic <凭证>` / `Bearer <凭证>`，包括引号内的认证值；保留认证方案，凭证替换成 `[REDACTED]`。空认证字段不会把下一行当作凭证。
+- 行首（可缩进）的 `Cookie:` / `Set-Cookie:`：整行值替换，止于换行。JSON / Python repr 中的带引号 cookie 值按上一条赋值规则处理。
+- `sk-` / `ts-` / `key-`（也支持 `_`）后接至少 12 位；`ghp_` 后接至少 12 位字母或数字；`xoxb-` 后接至少 12 位字母、数字或连字符；`AKIA` 后接恰好 16 位大写字母或数字。
+- 以 `eyJ` 开头、由三个非空 base64url 部分组成的 JWT。其他头部编码形式、空签名或加密令牌没有通用识别保证。
+- `scheme://用户名[:密码]@主机` 中的整个用户凭证部分，包括百分号编码的值；保留主机与路径，路径或查询里的 `@` 不当成用户凭证。
+- PEM 的 `PRIVATE KEY` 及带大写类型前缀的私钥块（如 RSA / EC / OPENSSH / ENCRYPTED）。完整块替换；已出现 BEGIN 但缺 END 时隐藏到文本结尾。
+
+这些规则只作用于 payload 值；协议 ID、时间和候选字典键的边界不变。脱敏仍是兜底，不能识别任意秘密或编码。已接受文本脱敏后仍限制在 4096 个码点，避免重启与导出校验时丢掉事件；再次恢复、导出和回放会重复应用相同脱敏规则。旧段文件不会被重写，旧文件本身仍可能含秘密，读取到内存、导出和回放时会清洗。

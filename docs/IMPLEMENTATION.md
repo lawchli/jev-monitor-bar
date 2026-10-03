@@ -835,3 +835,16 @@
   - 关闭后 110 ms 退出，`session.json` 被删除，没有残留进程。
 - 未验证：启动时不抢焦点、整屏截图里监视窗口叠在记事本上——检查开始时远程桌面会话是 Active，运行中断开（Disc），`GetForegroundWindow` 为 0、`CopyFromScreen` 失败。Defender 扫描（实时保护关闭）、干净机器解压即用。取证文件（`docs/reports/2026-09-30-windows/`）还在 PC 的工作区里未提交，等用户在那边的会话里批准提交。
 - 遗留：同上「未验证」；审计后续项见 `docs/AUDIT.md`。
+
+## HUMANE-EXPORT — 可清除的导出结果提示
+
+- 日期：2026-10-04
+- harness：codex
+- model：unknown（上下文未确定模型系列）
+- 提交：本条所在本地提交；分支 `feat/humane-export-notice`，起点 `origin/main@d583ed6`。按用户要求不 push。
+- 内容：
+  - `App.tsx` 的导出成功与取消提示增加原生「清除提示」按钮，可访问名称为「清除导出提示」。文字位于持续挂载的 `role=status`、`aria-live=polite`、`aria-atomic=true` 区域，按钮在公告区域外；提示不会自动消失。
+  - 开始新的导出前清空旧结果，使等待或失败时不再显示上次成功。保留已有文件名、字节与跳过行数文案，仅显示文件名。
+  - `styles.css` 增加提示与按钮布局、长文件名换行；新增 `tests/export-notice.test.ts` 三项 App 交互回归测试及根目录 `NOTES.md`，不增加依赖。
+- 验证：Linux（Node 22.23.2、pnpm 11.19.0）上 focused Prettier 检查、`pnpm typecheck`、`pnpm test`（191/191，0 跳过）、`pnpm build`、`git diff --check` 通过；导出提示测试单独运行 3/3 通过。共享依赖工作树各命令使用 `--config.verify-deps-before-run=false`，仅本次生效；测试因 sandbox 禁止本地 IPC socket 而使用获授权的升级执行，详见 `NOTES.md`。
+- 遗留：未运行原生 Electron 窗口、屏幕阅读器或 Windows/macOS 验证；没有将 DOM 属性检查写成原生公告已验证。没有推送、创建 PR 或合并分支。

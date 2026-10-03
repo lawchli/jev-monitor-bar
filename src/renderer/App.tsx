@@ -98,6 +98,7 @@ export function App({bridge}: {bridge: MonitorBridge}) {
     },
     bridge,
     onExport: () => {
+      setExportNote(undefined);
       void bridge
         .exportEvents()
         .then(result => {
@@ -138,7 +139,16 @@ export function App({bridge}: {bridge: MonitorBridge}) {
           </p>
         ) : null,
       )}
-      {exportNote ? <p className="line">{exportNote}</p> : null}
+      <div className={exportNote ? 'export-notice' : undefined}>
+        <span role="status" aria-live="polite" aria-atomic="true">
+          {exportNote}
+        </span>
+        {exportNote ? (
+          <button type="button" aria-label="清除导出提示" onClick={() => setExportNote(undefined)}>
+            清除提示
+          </button>
+        ) : null}
+      </div>
       {replay ? (
         <ReplayView replay={replay} now={now} onExit={() => setReplay(null)} />
       ) : mode === 'expanded' ? (

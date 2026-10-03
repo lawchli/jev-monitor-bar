@@ -835,3 +835,16 @@
   - 关闭后 110 ms 退出，`session.json` 被删除，没有残留进程。
 - 未验证：启动时不抢焦点、整屏截图里监视窗口叠在记事本上——检查开始时远程桌面会话是 Active，运行中断开（Disc），`GetForegroundWindow` 为 0、`CopyFromScreen` 失败。Defender 扫描（实时保护关闭）、干净机器解压即用。取证文件（`docs/reports/2026-09-30-windows/`）还在 PC 的工作区里未提交，等用户在那边的会话里批准提交。
 - 遗留：同上「未验证」；审计后续项见 `docs/AUDIT.md`。
+
+## UI-KBD-01 — LIVE 详情标签页支持键盘导航
+
+- 日期：2026-10-04
+- harness：codex
+- model：unknown（当前工具上下文未提供可确认的模型系列）
+- 提交：本条所在提交；独立分支 `feat/humane-keyboard-tabs`，起点 `origin/main@d583ed6`；按本次用户要求仅本地提交，不 push。
+- 内容：
+  - 展开 LIVE 视图的「决策 / 执行 / 时间线」支持左右方向键循环、Home / End 跳到首尾；切换时选中标签获得焦点，仅选中标签进入 Tab 顺序。Tab / Shift+Tab 保持默认行为。
+  - `LiveDetailTabs.tsx` 为标签和面板建立稳定的唯一 ID、`aria-controls` / `aria-labelledby` 关联，隐藏未选中面板，未选中内容仍不挂载。`ExpandedView.tsx` 接入组件并继续保存选中标签；初次挂载和后台刷新不抢焦点。
+  - 新增 `tests/expanded-tabs.test.ts` 的 5 项 JSDOM 回归：关联与唯一焦点入口、方向键循环及 Home / End、鼠标与原生 Tab 行为、刷新保留内容焦点、多实例 ID 唯一且稳定。根目录 `NOTES.md` 记录文件、实际命令与平台限制。
+- 验证：Linux（Node 22.23.2、pnpm 11.19.0）上 `pnpm --config.verify-deps-before-run=false typecheck`、`test`（193 / 193）、`build` 通过；同参数的 `exec tsx --test tests/expanded-tabs.test.ts`（5 / 5）和修改的 3 个 TypeScript 文件的 Prettier 检查、`git diff --check` 通过。共享依赖用工作树内忽略的符号链接；关闭 pnpm 自动依赖复核仅为单次命令参数。tsx IPC socket 和现有 loopback 测试在沙盒内被 EPERM 拒绝，获准在沙盒外实跑通过。
+- 遗留：本次没有原生 Electron、Windows / macOS 或屏幕阅读器实测；JSDOM 通过不表示这些平台的原生无障碍行为已验收。

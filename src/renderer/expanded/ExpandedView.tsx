@@ -3,11 +3,10 @@ import type {ViewProps} from '../types';
 import {statusText, truncate} from '../view-model/common';
 import {DecisionsTab} from './DecisionsTab';
 import {ExecutionTab} from './ExecutionTab';
+import {LiveDetailTabs, type LiveDetailTabId} from './LiveDetailTabs';
 import {TimelineTab} from './TimelineTab';
 import {attemptGroups, decisionCards, laterAttemptKeys, runSummary} from './model';
 import './expanded.css';
-
-type TabId = 'decisions' | 'execution' | 'timeline';
 
 export function ExpandedView({
   snapshot,
@@ -22,7 +21,7 @@ export function ExpandedView({
   onOpenReplay,
   bridge,
 }: ViewProps) {
-  const [tab, setTab] = useState<TabId>('decisions');
+  const [tab, setTab] = useState<LiveDetailTabId>('decisions');
   const runs = [...(snapshot?.runs ?? [])].sort((left, right) => {
     const leftTime = Date.parse(left.last_received ?? '') || 0;
     const rightTime = Date.parse(right.last_received ?? '') || 0;
@@ -92,48 +91,21 @@ export function ExpandedView({
             <span>{summary.anomalyText}</span>
             {summary.limitedText ? <span className="tone-warning">{summary.limitedText}</span> : null}
           </div>
-          <div className="tabs" role="tablist">
-            <button
-              type="button"
-              role="tab"
-              data-testid="tab-decisions"
-              aria-selected={tab === 'decisions'}
-              onClick={() => setTab('decisions')}
-            >
-              决策
-            </button>
-            <button
-              type="button"
-              role="tab"
-              data-testid="tab-execution"
-              aria-selected={tab === 'execution'}
-              onClick={() => setTab('execution')}
-            >
-              执行
-            </button>
-            <button
-              type="button"
-              role="tab"
-              data-testid="tab-timeline"
-              aria-selected={tab === 'timeline'}
-              onClick={() => setTab('timeline')}
-            >
-              时间线
-            </button>
-          </div>
-          <div className="expanded-panel" role="tabpanel">
-            {tab === 'decisions' ? <DecisionsTab cards={decisionCards(run)} /> : null}
-            {tab === 'execution' ? <ExecutionTab groups={attemptGroups(run)} /> : null}
-            {tab === 'timeline' ? (
-              <TimelineTab
-                events={events}
-                runId={run.id}
-                bridge={bridge}
-                retryKeys={laterAttemptKeys(run)}
-                eventCount={run.event_count}
-              />
-            ) : null}
-          </div>
+          <LiveDetailTabs selected={tab} onSelect={setTab}>
+            {tab => {
+              if (tab === 'decisions') return <DecisionsTab cards={decisionCards(run)} />;
+              if (tab === 'execution') return <ExecutionTab groups={attemptGroups(run)} />;
+              return (
+                <TimelineTab
+                  events={events}
+                  runId={run.id}
+                  bridge={bridge}
+                  retryKeys={laterAttemptKeys(run)}
+                  eventCount={run.event_count}
+                />
+              );
+            }}
+          </LiveDetailTabs>
         </>
       )}
     </section>

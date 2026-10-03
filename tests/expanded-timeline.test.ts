@@ -27,10 +27,12 @@ function stored(cursor: number, runId: string, type: EventType = 'heartbeat'): S
 
 function deferred<T>() {
   let resolve: (value: T) => void = () => {};
-  const promise = new Promise<T>(done => {
+  let reject: (reason: unknown) => void = () => {};
+  const promise = new Promise<T>((done, fail) => {
     resolve = done;
+    reject = fail;
   });
-  return {promise, resolve};
+  return {promise, resolve, reject};
 }
 
 test('a stale page response does not mix another run into the timeline', async () => {
@@ -336,6 +338,161 @@ test('an empty older page says when events were dropped from the retained window
     assert.deepEqual(
       renderedCursors(dom.window.document),
       range(11, 20).map(event => event.cursor),
+    );
+  }, bridge);
+});
+
+test('failed history loading preserves rows, selection and scroll position and can retry the same page', async () => {
+  const calls: PageQuery[] = [];
+  const pages: ReturnType<typeof deferred<EventPage>>[] = [];
+  const bridge = {
+    page: (query: PageQuery) => {
+      calls.push(query);
+      const pending = deferred<EventPage>();
+      pages.push(pending);
+      return pending.promise;
+    },
+  } as Pick<MonitorBridge, 'page'> as MonitorBridge;
+
+  await renderTimeline(async ({dom, render}) => {
+    await act(async () => render(range(31, 40)));
+    await act(async () => click(dom, '[data-testid="timeline-load-older"]'));
+    await act(async () => pages[0].resolve({events: range(21, 30), truncated: false}));
+    await act(async () => click(dom, '[data-cursor="25"]'));
+    const list = dom.window.document.querySelector('.timeline-list');
+    assert.ok(list);
+    let scrollTop = 80;
+    let scrollWrites = 0;
+    Object.defineProperty(list, 'scrollTop', {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => {
+        scrollTop = value;
+        scrollWrites += 1;
+      },
+    });
+    const cursors = renderedCursors(dom.window.document);
+    const selected = dom.window.document.querySelector('.timeline-json')?.textContent;
+    const button = () => dom.window.document.querySelector<HTMLButtonElement>('[data-testid="timeline-load-older"]');
+    const message = () => dom.window.document.querySelector('[role="status"]');
+
+    await act(async () => click(dom, '[data-testid="timeline-load-older"]'));
+    assert.equal(button()?.disabled, true);
+    await act(async () => pages[1].reject(new Error('private backend path /secrets/session.json')));
+    assert.equal(message()?.textContent?.trim(), '暂时未能加载更早的事件，请重试。');
+    assert.equal(dom.window.document.body.textContent?.includes('/secrets/session.json'), false);
+    assert.equal(button()?.textContent?.trim(), '重试加载更早');
+    assert.equal(button()?.disabled, false);
+    assert.deepEqual(renderedCursors(dom.window.document), cursors);
+    assert.equal(dom.window.document.querySelector('.timeline-json')?.textContent, selected);
+    assert.equal(scrollTop, 80);
+    assert.equal(scrollWrites, 0);
+
+    await act(async () => render(range(41, 50)));
+    assert.deepEqual(renderedCursors(dom.window.document), cursors);
+    assert.equal(scrollWrites, 0);
+    await act(async () => click(dom, '[data-testid="timeline-load-older"]'));
+    assert.deepEqual(calls[2], calls[1]);
+    assert.equal(button()?.disabled, true);
+    assert.ok(message());
+    await act(async () => pages[2].resolve({events: range(11, 20), truncated: false}));
+    assert.equal(message(), null);
+    assert.equal(button()?.textContent?.trim(), '加载更早');
+    assert.equal(renderedCursors(dom.window.document)[0], 11);
+  }, bridge);
+});
+
+test('successful empty retry clears the error and keeps the retained-window explanation', async () => {
+  let requests = 0;
+  const bridge = {
+    page: async () => {
+      if (++requests === 1) throw new Error('unavailable');
+      return {events: [], truncated: true};
+    },
+  } as Pick<MonitorBridge, 'page'> as MonitorBridge;
+  await renderTimeline(async ({dom, render}) => {
+    await act(async () => render(range(11, 20)));
+    await act(async () => click(dom, '[data-testid="timeline-load-older"]'));
+    assert.ok(dom.window.document.querySelector('[role="status"]'));
+    await act(async () => click(dom, '[data-testid="timeline-load-older"]'));
+    assert.equal(dom.window.document.querySelector('[role="status"]'), null);
+    const button = dom.window.document.querySelector<HTMLButtonElement>('[data-testid="timeline-load-older"]');
+    assert.equal(button?.textContent?.trim(), '更早的事件已超出保留窗口');
+    assert.equal(button?.disabled, true);
+    assert.deepEqual(
+      renderedCursors(dom.window.document),
+      range(11, 20).map(event => event.cursor),
+    );
+  }, bridge);
+});
+
+test('history errors clear on run switch and return to latest', async () => {
+  const bridge = {
+    page: async () => {
+      throw new Error('unavailable');
+    },
+  } as Pick<MonitorBridge, 'page'> as MonitorBridge;
+  await renderTimeline(async ({dom, render}) => {
+    await act(async () => render(range(11, 20)));
+    await act(async () => click(dom, '[data-testid="timeline-load-older"]'));
+    assert.ok(dom.window.document.querySelector('[role="status"]'));
+    await act(async () => render(range(31, 40, 'run-b'), 'run-b'));
+    assert.equal(dom.window.document.querySelector('[role="status"]'), null);
+    assert.equal(
+      dom.window.document.querySelector('[data-testid="timeline-load-older"]')?.textContent?.trim(),
+      '加载更早',
+    );
+    const list = dom.window.document.querySelector('.timeline-list');
+    assert.ok(list);
+    Object.defineProperty(list, 'scrollHeight', {configurable: true, value: 1000});
+    Object.defineProperty(list, 'clientHeight', {configurable: true, value: 240});
+    await act(async () => {
+      list.scrollTop = 80;
+      list.dispatchEvent(new dom.window.Event('scroll'));
+    });
+    await act(async () => click(dom, '[data-testid="timeline-load-older"]'));
+    assert.ok(dom.window.document.querySelector('[role="status"]'));
+    await act(async () => click(dom, '[data-testid="timeline-resume"]'));
+    assert.equal(dom.window.document.querySelector('[role="status"]'), null);
+    assert.equal(
+      dom.window.document.querySelector('[data-testid="timeline-load-older"]')?.textContent?.trim(),
+      '加载更早',
+    );
+  }, bridge);
+});
+
+test('stale history failures cannot show an error or finish a newer request after switching runs or resuming', async () => {
+  const pages: ReturnType<typeof deferred<EventPage>>[] = [];
+  const bridge = {
+    page: () => {
+      const pending = deferred<EventPage>();
+      pages.push(pending);
+      return pending.promise;
+    },
+  } as Pick<MonitorBridge, 'page'> as MonitorBridge;
+  await renderTimeline(async ({dom, render}) => {
+    await act(async () => render(range(11, 20)));
+    await act(async () => click(dom, '[data-testid="timeline-load-older"]'));
+    await act(async () => render(range(31, 40, 'run-b'), 'run-b'));
+    await act(async () => click(dom, '[data-testid="timeline-load-older"]'));
+    await act(async () => pages[0].reject(new Error('old run failed')));
+    const button = () => dom.window.document.querySelector<HTMLButtonElement>('[data-testid="timeline-load-older"]');
+    assert.equal(dom.window.document.querySelector('[role="status"]'), null);
+    assert.equal(button()?.disabled, true);
+    assert.equal(button()?.textContent?.trim(), '正在加载…');
+    await act(async () => pages[1].resolve({events: range(21, 30, 'run-b'), truncated: false}));
+    await act(async () => click(dom, '[data-testid="timeline-load-older"]'));
+    await act(async () => click(dom, '[data-testid="timeline-resume"]'));
+    await act(async () => click(dom, '[data-testid="timeline-load-older"]'));
+    await act(async () => pages[2].reject(new Error('old history view failed')));
+    assert.equal(dom.window.document.querySelector('[role="status"]'), null);
+    assert.equal(button()?.disabled, true);
+    assert.equal(button()?.textContent?.trim(), '正在加载…');
+    await act(async () => pages[3].resolve({events: [], truncated: false}));
+    assert.equal(button()?.textContent?.trim(), '没有更早的事件');
+    assert.deepEqual(
+      renderedCursors(dom.window.document),
+      range(31, 40, 'run-b').map(event => event.cursor),
     );
   }, bridge);
 });

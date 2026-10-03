@@ -30,6 +30,7 @@ export function TimelineTab({
   const [pausedCount, setPausedCount] = useState(0);
   const [selected, setSelected] = useState<number>();
   const [loading, setLoading] = useState(false);
+  const [olderFailed, setOlderFailed] = useState(false);
   const [olderEnd, setOlderEnd] = useState<OlderEnd>('unknown');
   const listRef = useRef<HTMLDivElement>(null);
   const followingRef = useRef(true);
@@ -53,6 +54,7 @@ export function TimelineTab({
     setOlderEnd('unknown');
     setSelected(undefined);
     setLoading(false);
+    setOlderFailed(false);
     followingRef.current = true;
     setFollowing(true);
   }, [runId]);
@@ -124,6 +126,7 @@ export function TimelineTab({
     // so the tail never skips the events in between. An in-flight older page belongs to the history view.
     epochRef.current += 1;
     setLoading(false);
+    setOlderFailed(false);
     setOlder([]);
     setHeld([]);
     setOlderEnd('unknown');
@@ -168,6 +171,7 @@ export function TimelineTab({
     try {
       const page = await bridge.page({runId: requestRunId, beforeCursor: earliest, limit: 100});
       if (!current()) return;
+      setOlderFailed(false);
       const accepted = page.events.filter(event => event.run_id === requestRunId);
       if (accepted.length === 0) {
         setOlderEnd(page.truncated ? 'truncated' : 'none');
@@ -180,7 +184,9 @@ export function TimelineTab({
       }
       setOlder(currentRows => mergeEvents(currentRows, accepted, requestRunId));
     } catch {
+      if (!current()) return;
       scrollToTop.current = false;
+      setOlderFailed(true);
     } finally {
       if (current()) setLoading(false);
     }
@@ -192,7 +198,9 @@ export function TimelineTab({
       ? '没有更早的事件'
       : atLoadedStart && olderEnd === 'truncated'
         ? '更早的事件已超出保留窗口'
-        : '加载更早';
+        : olderFailed
+          ? '重试加载更早'
+          : '加载更早';
 
   return (
     <div className="timeline">
@@ -214,6 +222,11 @@ export function TimelineTab({
           {olderLabel}
         </button>
       </div>
+      {olderFailed ? (
+        <p className="muted" role="status">
+          暂时未能加载更早的事件，请重试。
+        </p>
+      ) : null}
       {following ? (
         <p className="follow-note">跟随最新</p>
       ) : (

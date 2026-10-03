@@ -835,3 +835,13 @@
   - 关闭后 110 ms 退出，`session.json` 被删除，没有残留进程。
 - 未验证：启动时不抢焦点、整屏截图里监视窗口叠在记事本上——检查开始时远程桌面会话是 Active，运行中断开（Disc），`GetForegroundWindow` 为 0、`CopyFromScreen` 失败。Defender 扫描（实时保护关闭）、干净机器解压即用。取证文件（`docs/reports/2026-09-30-windows/`）还在 PC 的工作区里未提交，等用户在那边的会话里批准提交。
 - 遗留：同上「未验证」；审计后续项见 `docs/AUDIT.md`。
+
+## HUMANE-HISTORY-RETRY — 时间线更早事件加载失败时温和提示与重试
+
+- 日期：2026-10-04
+- harness：codex
+- model：unknown
+- 提交：本条所在提交（本地分支 `feat/humane-history-retry`，起点 `origin/main@d583ed6`；按本次用户要求不 push、不集成）
+- 内容：`src/renderer/expanded/TimelineTab.tsx` 在更早分页失败时显示「暂时未能加载更早的事件，请重试。」（`role="status"`），既有按钮改为「重试加载更早」。不显示后端原始错误，保留已加载历史行、选中详情与列表滚动位置。请求成功（包括空页）、切换 run、回到最新时清除错误；失败路径复用 run/epoch 判断，忽略过期拒绝。复用 muted 样式，无依赖或桌面壳修改。根目录 `NOTES.md` 记录改动、验证命令与限制。
+- 验证：Linux x86_64（内核 6.12.94+，Node 22.23.2）。所有 pnpm 命令带 `--config.verify-deps-before-run=false`，复用仓库根目录已安装依赖的 node_modules 符号链接，避免 worktree 自动安装；未改依赖或配置。`pnpm typecheck`、`pnpm build` 通过；`pnpm exec prettier --check src/renderer/expanded/TimelineTab.tsx tests/expanded-timeline.test.ts` 通过；`pnpm exec tsx --test tests/expanded-timeline.test.ts` 8/8；`pnpm test` 192/192。新增 4 项 JSDOM 回归覆盖失败后历史行、选中详情、scrollTop 零写入，重试参数与成功清错，空页保留窗口说明，run/回到最新清错与过期失败不影响新请求。初次沙箱内测试受 tsx IPC `listen EPERM` 限制，授权提升后执行通过。main 起点的 CI 成功运行 `36713638178` 由协调 agent 确认；本分支未推送、未运行新 CI。
+- 遗留：JSDOM 验证 DOM 与列表 scrollTop，不验证浏览器像素位置；未执行本功能的原生 Electron、Windows/macOS 渲染、读屏通知、桌面滚动、打包或 Defender 验证。

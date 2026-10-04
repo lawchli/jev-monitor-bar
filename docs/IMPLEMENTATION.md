@@ -880,3 +880,13 @@
 - 遗留：不改变现有按模式脱敏对未标识任意文本的能力边界；Windows / macOS 原生保存框未在本机验证。本功能本次 push 后的 CI 另查。记录 33 的 CI `37174034425`、记录 34 的 CI `37174201231` 所有作业通过（含三平台 core、Windows 打包与 Windows/Linux smoke）。
 
 记录 35 推送补充：首次 push 被 GitHub Push Protection 拒绝，命中的是新增测试中完整字面量形式的合成 Slack token，并非真实凭证。改为测试运行时组装相同假值，保留脱敏断言；仅 amend 本会话尚未推送成功的文件名功能提交，既有远端提交不改写，不 force-push。随后重新执行 typecheck、完整 tests 与格式检查再推送。
+
+## 36 — Python 会话读取的资源与凭证边界
+
+- 日期：2026-10-04
+- harness：codex
+- model：gpt-sol
+- 提交：本条所在提交；分支 `feat/burn-1600-c`
+- 内容：Python 会话读取最多 16 KiB + 1 字节，超限、解码/递归失败视为离线；token 限制为 1–1024 个可见 ASCII 字符。无效 header 凭证不再让已入队事件在发送时被丢弃，等待会话修复后继续投递。没有改已有审计分支的 deleted-cwd、fork 或非有限数修复。
+- 验证：Linux，Node 22.23.2 / Python 3.13.5：`pnpm typecheck`、`pnpm test`（工作树 246/246，含本轮其他独立切片）、`pnpm format:check` 通过；Python 完整 unittest 26/26，新增会话测试 5/5。大小/凭证回归在旧代码失败；真实后台线程在坏会话下保留队列，修复后发送成功。接手时已 fetch，基线 `79faebb` 的 CI `37174547785` 成功。
+- 遗留：Windows / macOS 未在本机运行；本分支只推送、不发布 PR 或评论，现有 CI 只对 main push / PR / 手动触发运行，因此本分支推送本身不会启动三平台 CI。

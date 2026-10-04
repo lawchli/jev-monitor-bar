@@ -59,6 +59,10 @@ _BACKOFF_START = 0.5
 _BACKOFF_MAX = 5.0
 # Same byte cap as the receiver (`Content-Length` / body > 64 KiB is 413).
 _MAX_EVENT_BYTES = 65536
+# A session contains an origin and a credential, not event data. Read one
+# extra byte to detect growth as well as files that already exceed the cap.
+_MAX_SESSION_BYTES = 16 * 1024
+_MAX_SESSION_TOKEN = 1024
 # Returned by `_post` when this event cannot be sent and must be dropped.
 _UNSENDABLE = object()
 
@@ -150,15 +154,22 @@ def _loopback_origin(url: str) -> Optional[str]:
 
 def _read_session(path: str) -> Optional[dict]:
     try:
-        with open(path, 'r', encoding='utf-8') as handle:
-            data = json.load(handle)
-    except (OSError, ValueError, UnicodeError):
+        with open(path, 'rb') as handle:
+            raw = handle.read(_MAX_SESSION_BYTES + 1)
+        if len(raw) > _MAX_SESSION_BYTES:
+            return None
+        data = json.loads(raw.decode('utf-8'))
+    except (OSError, ValueError, UnicodeError, RecursionError):
         return None
     if not isinstance(data, dict):
         return None
     url = data.get('url')
     token = data.get('token')
     if not isinstance(url, str) or not isinstance(token, str) or not url or not token:
+        return None
+    # Invalid header values must leave queued events offline, rather than
+    # reaching Request and being counted as unsendable events.
+    if len(token) > _MAX_SESSION_TOKEN or any(ord(char) < 33 or ord(char) > 126 for char in token):
         return None
     origin = _loopback_origin(url)
     if origin is None:

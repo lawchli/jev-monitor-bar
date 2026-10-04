@@ -54,13 +54,18 @@ test('compact model describes an empty receiver', () => {
   const store = new EventStore(tempDir());
   const model = compactModel(store.snapshot(), status(), Date.now());
   assert.equal(model.hasRun, false);
-  assert.equal(model.waiting, '等待宿主连接…');
-  assert.equal(model.name, '等待宿主连接…');
+  assert.equal(model.waiting, '任务发来事件后，会显示在这里。');
+  assert.equal(model.name, '还没有运行记录');
   assert.equal(model.receiver, '监听中 · http://127.0.0.1:9');
   assert.equal(model.connectionText, model.receiver);
   assert.equal(model.runStatus, '等待');
   assert.equal(model.otherRunning, 0);
   assert.equal(model.nextRunId, undefined);
+  assert.equal(model.simulated, false);
+  for (const key of ['phase', 'progress', 'duration', 'choice', 'action', 'execStatus'] as const) {
+    assert.equal(model[key], '未知');
+  }
+  assert.equal(compactModel(undefined, undefined, Date.now()).name, '正在读取本地记录…');
   assert.equal(
     compactModel(store.snapshot(), status({listening: false, url: undefined}), Date.now()).receiver,
     '未监听',

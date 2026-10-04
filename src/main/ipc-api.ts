@@ -1,8 +1,9 @@
 import type {EventPage, ExportResult, PageQuery, ReceiverStatus, ReplayData, Snapshot, WindowMode} from '../ipc';
 import {validateEvent} from '../protocol';
-import {parseReplay, exportFileName} from '../replay';
+import {parseReplay} from '../replay';
 import {sanitizeEvent} from '../redact';
 import type {EventStore} from '../store';
+import {suggestedExportFileName} from './export-name';
 
 export interface ReplayFileIO {
   saveDialog(defaultPath: string): Promise<string | undefined>;
@@ -115,7 +116,8 @@ export function createMonitorHandlers(opts: MonitorHandlerOptions) {
     },
     async exportEvents(event: IpcSender, files: ReplayFileIO): Promise<ExportResult> {
       guard(event);
-      const selected = await files.saveDialog(exportFileName(new Date()));
+      const runs = opts.store?.snapshot().runs ?? [];
+      const selected = await files.saveDialog(suggestedExportFileName(new Date(), runs));
       if (!selected) return {saved: false};
       const exported = opts.store ? opts.store.exportLines() : {text: '', skipped: 0};
       files.write(selected, exported.text);

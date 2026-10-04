@@ -105,6 +105,24 @@ async function poll(fn, what, timeout = 10_000, interval = 50) {
   }
 }
 
+async function keyboardFocus(page, control, name) {
+  await control.focus();
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Shift+Tab');
+  const focus = await control.evaluate(el => {
+    const style = getComputedStyle(el);
+    return {
+      active: document.activeElement === el,
+      visible: el.matches(':focus-visible'),
+      outline: style.outlineStyle,
+      width: style.outlineWidth,
+      offset: style.outlineOffset,
+      color: style.outlineColor,
+    };
+  });
+  check(name, focus.active && focus.visible && focus.outline === 'solid' && parseFloat(focus.width) >= 2, focus);
+}
+
 function appEnv() {
   const env = {...process.env, JEV_MONITOR_HOME: home, JEV_MONITOR_SESSION: sessionFile};
   delete env.ELECTRON_RUN_AS_NODE;
@@ -696,9 +714,13 @@ async function run() {
   await step('compact.waitingHost', async () => {
     const root = page.getByTestId('compact-root');
     await poll(async () => (await root.getAttribute('data-empty')) === 'true', '紧凑条空状态');
-    check('compact.waitingHost', (await root.innerText()).includes('等待宿主连接'));
+    await poll(async () => (await root.innerText()).includes('还没有运行记录'), '本地记录读取完成');
+    check('compact.waitingHost', (await root.innerText()).includes('任务发来事件后，会显示在这里'));
   });
   await step('screenshot.compactEmpty', () => screenshot(page, 'compact-empty'));
+  await step('accessibility.compactFocus', () =>
+    keyboardFocus(page, page.getByTestId('compact-pin'), 'accessibility.compactFocus'),
+  );
 
   // 3. 可见延迟：此时只有这一个 run，紧凑条自动跟随它。
   const latency = await step('latency', () => measureLatency(page, session));
@@ -796,6 +818,9 @@ async function run() {
     });
   }
   await step('screenshot.expanded', () => screenshot(page, 'expanded'));
+  await step('accessibility.expandedFocus', () =>
+    keyboardFocus(page, expanded.getByLabel('运行'), 'accessibility.expandedFocus'),
+  );
   if (demo?.code === 0) {
     await step('fixtures.listed', async () => {
       const picker = expanded.getByLabel('运行');
@@ -841,6 +866,7 @@ async function run() {
       await expanded.getByTestId('tab-timeline').click();
       const items = expanded.getByTestId('timeline-item');
       await poll(async () => (await items.count()) >= 40, '时间线至少 40 条');
+      await keyboardFocus(page, items.first(), 'accessibility.timelineFocus');
       const list = expanded.locator('.timeline-list');
       await poll(async () => (await list.evaluate(el => el.scrollHeight - el.clientHeight)) > 20, '时间线可以滚动');
       await list.evaluate(el => {
@@ -903,6 +929,22 @@ async function run() {
     });
   }
   if (exported) {
+    await step('accessibility.reducedMotion', async () => {
+      try {
+        await page.emulateMedia({reducedMotion: 'reduce'});
+        const motion = await page.evaluate(() => {
+          const offenders = [...document.querySelectorAll('*')].filter(el => {
+            const style = getComputedStyle(el);
+            const transitions = style.transitionDuration.split(',').some(value => parseFloat(value) > 0);
+            return transitions || style.animationName !== 'none' || style.scrollBehavior !== 'auto';
+          });
+          return {reduced: matchMedia('(prefers-reduced-motion: reduce)').matches, offenders: offenders.length};
+        });
+        check('accessibility.reducedMotion', motion.reduced && motion.offenders === 0, motion);
+      } finally {
+        await page.emulateMedia({reducedMotion: null});
+      }
+    });
     await step('replay', async () => {
       await expanded.getByTestId('open-replay').click();
       const replay = page.getByTestId('replay-root');

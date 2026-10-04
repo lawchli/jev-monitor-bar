@@ -24,7 +24,7 @@ export function App({bridge}: {bridge: MonitorBridge}) {
   const commandPending = useRef(false);
   const commandEpoch = useRef(0);
   const selectedRunId = explicitRunId ?? autoRunId;
-  const {snapshot, status, statusError, snapshotError, now} = useMonitor(selectedRunId);
+  const {snapshot, status, statusError, snapshotError, retrying, retry, now} = useMonitor(selectedRunId, bridge);
 
   useEffect(() => {
     if (explicitRunId !== undefined) return;
@@ -123,21 +123,26 @@ export function App({bridge}: {bridge: MonitorBridge}) {
     },
   };
 
-  const notices = [
-    ['status', statusError],
-    ['snapshot', snapshotError],
-    ['command', commandError],
-  ] as const;
+  const receiverNote =
+    statusError || snapshotError
+      ? '暂时无法读取更新 · 已有记录仍保留'
+      : status?.listening === false
+        ? '接收端暂未监听 · 已有记录仍保留'
+        : undefined;
 
   return (
     <div id="app-root" data-cursor={snapshot?.cursor ?? 0} data-mode={mode}>
-      {notices.map(([key, text]) =>
-        text ? (
-          <p key={key} className="line tone-danger">
-            {text}
-          </p>
-        ) : null,
-      )}
+      {receiverNote ? (
+        <div className="receiver-notice" data-testid="receiver-notice">
+          <span role="status" title={receiverNote}>
+            {receiverNote}
+          </span>
+          <button type="button" onClick={retry} disabled={retrying}>
+            {retrying ? '正在读取…' : '重试读取'}
+          </button>
+        </div>
+      ) : null}
+      {commandError ? <p className="line tone-danger">{commandError}</p> : null}
       {exportNote ? <p className="line">{exportNote}</p> : null}
       {replay ? (
         <ReplayView replay={replay} now={now} onExit={() => setReplay(null)} />

@@ -14,6 +14,7 @@
   --space-lg: 16px;
   --bg: #f6f7f9;
   --fg: #1a1d21;
+  --focus-ring: var(--tone-active);
   --font-family: system-ui, -apple-system, 'Segoe UI', 'Noto Sans', sans-serif;
 }
 
@@ -33,12 +34,61 @@
   box-sizing: border-box;
 }
 
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* Keep the ring inside controls at the compact and scrolling edges. */
+.compact-root :focus-visible,
+.timeline-item:focus-visible {
+  outline-offset: -2px;
+}
+
 body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
   font-family: var(--font-family);
   font-size: var(--font-size-md);
+}
+
+#app-root {
+  display: flex;
+  flex-direction: column;
+}
+
+.receiver-notice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex: none;
+  padding: 3px var(--space-sm);
+  color: var(--tone-neutral);
+  font-size: var(--font-size-sm);
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 20%, transparent);
+}
+
+.receiver-notice span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.receiver-notice button {
+  flex: none;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--tone-neutral);
+  border-radius: 4px;
+  padding: 1px var(--space-xs);
+  font: inherit;
+}
+
+#app-root > .line {
+  flex: none;
 }
 
 .compact,
@@ -74,5 +124,6 @@ body {
   *::after {
     transition: none !important;
     animation: none !important;
+    scroll-behavior: auto !important;
   }
 }

@@ -57,8 +57,8 @@ export function CompactView({
         </p>
       ) : (
         <p className="compact-row">
-          <span className="compact-grow" title={model.receiver}>
-            {model.waiting} · {model.receiver}
+          <span className="compact-grow" title={model.waiting}>
+            {model.waiting}
           </span>
         </p>
       )}

@@ -858,3 +858,13 @@
   - 应用根布局改为纵向 flex，横幅与视图共用窗口空间；紧凑视图剩余空间过小时可以滚动查看。修正记录 32 新文案遗漏更新的 Electron smoke 空状态断言（首次 PR 的 Windows/Linux smoke 因此失败）。
 - 验证：Linux：`pnpm typecheck`、`pnpm test`（228/228）、`pnpm format:check`、`pnpm build` 通过；`xvfb-run -a pnpm smoke --no-build` 32/32。新增 DOM 验收覆盖初次失败恢复、继续失败保留 cursor/run/暂停行/详情、成功重试、连续点击合并、未监听状态持续显示、旧运行响应忽略；重试未触发任何窗口或宿主命令。现有 Playwright + Chrome 测量 360/400/440 × 96 紧凑视图：横幅重试按钮、置顶、展开完整可见；展开时间线在 320px 高度内。
 - 遗留：重试仅重新读取，不宣称重启失败的接收端；Windows / macOS 原生窗口未在本机验证，CI 以本次 push 后结果为准。
+
+## 34 — Humane polish：键盘焦点与减少动态效果
+
+- 日期：2026-10-04
+- harness：codex
+- model：gpt-sol
+- 提交：本条所在提交
+- 内容：共享 `:focus-visible` 2px 轮廓随深浅色主题使用现有活动色；紧凑控件与时间线行使用向内轮廓，避免被窗口/滚动区域裁掉。沿用已有 reduced-motion 关闭过渡与动画的规则，并加入 `scroll-behavior: auto`。不改其他分支已交付的键盘页签导航。
+- 验证：Linux：`pnpm typecheck`、`pnpm test`（228/228）、`pnpm format:check`、`pnpm build` 通过。`xvfb-run -a pnpm smoke --no-build` 36/36：新增真实 Tab/Shift+Tab 后焦点轮廓检查（紧凑置顶、运行选择器、时间线行）和 reduced-motion 媒体仿真检查；暂停接收与导出回放闭环仍通过。独立 Chrome/Playwright 检查深色与浅色的紧凑按钮、横幅重试、选择器、页签、时间线工具与事件行；实际导出提示过渡在普通设置为 150ms，减少动态效果时为 0，动画为 none，滚动为 auto。
+- 遗留：Windows / macOS 原生窗口未在本机验证；新增 Electron 检查在 PR CI 执行。

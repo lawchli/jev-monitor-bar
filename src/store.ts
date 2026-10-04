@@ -9,6 +9,16 @@ const MAX_RUNS = 200;
 // A segment that could not be deleted (Windows antivirus, indexers) is tried again no sooner than this.
 const PRUNE_RETRY_MS = 1000;
 
+function segmentIndex(name: string): number | undefined {
+  const match = /^events-(\d{8,})\.jsonl$/.exec(name);
+  if (!match) return undefined;
+  const index = Number(match[1]);
+  if (!Number.isSafeInteger(index)) {
+    throw Object.assign(new Error('Event segment index exceeds the safe integer range'), {code: 'EOVERFLOW'});
+  }
+  return index;
+}
+
 export class EventStore extends EventEmitter {
   events: StoredEvent[] = [];
   runs = new Map<string, RunState>();
@@ -19,6 +29,7 @@ export class EventStore extends EventEmitter {
   corruptLines = 0;
   private segment = 0;
   private segmentBytes = 0;
+  private segmentDamaged = false;
   private fd: number | undefined;
   private prunePending = false;
   private pruneRetryAt: number | undefined;
@@ -35,7 +46,7 @@ export class EventStore extends EventEmitter {
     const files = this.files();
     // Only recover bounded retained segments; malformed/torn final lines are counted.
     for (const f of files.slice(-maxSegments)) {
-      this.segment = Math.max(this.segment, Number(f.slice(7, 15)));
+      this.segment = Math.max(this.segment, segmentIndex(f)!);
       for (const line of fs.readFileSync(path.join(directory, f), 'utf8').split('\n')) {
         if (!line) continue;
         let row: unknown;
@@ -66,18 +77,29 @@ export class EventStore extends EventEmitter {
     this.pruneFiles();
   }
   private files() {
-    return fs
-      .readdirSync(this.directory)
-      .filter(f => /^events-\d{8}\.jsonl$/.test(f))
-      .sort();
+    return (
+      fs
+        .readdirSync(this.directory)
+        .map(name => ({name, index: segmentIndex(name)}))
+        .filter((file): file is {name: string; index: number} => file.index !== undefined)
+        // Wider indices are newer even when their first digit sorts before a legacy eight-digit name.
+        // Alternate zero padding can name the same index: retain both files in a deterministic order.
+        .sort((a, b) => a.index - b.index || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+        .map(file => file.name)
+    );
   }
   private file() {
     return path.join(this.directory, `events-${String(this.segment).padStart(8, '0')}.jsonl`);
   }
   private rotate() {
+    const next = this.segment + 1;
+    if (!Number.isSafeInteger(next)) {
+      throw Object.assign(new Error('Event segment index exceeds the safe integer range'), {code: 'EOVERFLOW'});
+    }
     this.closeSegment();
-    this.segment++;
+    this.segment = next;
     this.segmentBytes = 0;
+    this.segmentDamaged = false;
     // The new file appears with its first line; pruning after that write leaves exactly maxSegments files.
     this.prunePending = true;
   }
@@ -96,7 +118,7 @@ export class EventStore extends EventEmitter {
     this.closeSegment();
   }
   private append(data: Buffer, cursor: number) {
-    if (this.segmentBytes + data.length > this.segmentLimit) this.rotate();
+    if (this.segmentDamaged || this.segmentBytes + data.length > this.segmentLimit) this.rotate();
     // One descriptor per segment: opening and closing the file for every event cost about half of ingest.
     const fd = (this.fd ??= fs.openSync(this.file(), 'a'));
     let written = 0;
@@ -111,7 +133,8 @@ export class EventStore extends EventEmitter {
       this.closeSegment();
       // Part of a line on disk would glue onto the next record; start a fresh segment, as after a restart.
       if (written > 0) {
-        this.rotate();
+        // Defer rotation until the next write, so exhaustion cannot mask this failure or leave a torn segment reusable.
+        this.segmentDamaged = true;
         // All but the newline may have landed, and recovery would load that line with this cursor. Burn it so the
         // next event does not reuse the number (the timeline keys rows by cursor).
         this.cursor = cursor;

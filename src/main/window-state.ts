@@ -111,22 +111,24 @@ function sleepMs(ms: number): void {
 export function saveWindowState(file: string, state: SavedWindowState): void {
   fs.mkdirSync(path.dirname(file), {recursive: true});
   const tmp = `${file}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
-  fs.writeFileSync(tmp, `${JSON.stringify(state)}\n`, {mode: 0o600});
-  for (let attempt = 0; attempt <= RENAME_RETRIES; attempt += 1) {
-    if (attempt > 0) sleepMs(20 * attempt);
-    try {
-      fs.renameSync(tmp, file);
-      break;
-    } catch (error) {
-      if (!RETRYABLE.has(errnoCode(error)) || attempt === RENAME_RETRIES) {
-        try {
-          fs.unlinkSync(tmp);
-        } catch {
-          // The temp file may already be gone.
-        }
-        throw error;
+  try {
+    fs.writeFileSync(tmp, `${JSON.stringify(state)}\n`, {mode: 0o600});
+    for (let attempt = 0; attempt <= RENAME_RETRIES; attempt += 1) {
+      if (attempt > 0) sleepMs(20 * attempt);
+      try {
+        fs.renameSync(tmp, file);
+        break;
+      } catch (error) {
+        if (!RETRYABLE.has(errnoCode(error)) || attempt === RENAME_RETRIES) throw error;
       }
     }
+  } catch (error) {
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      // Cleanup must not replace the original write or rename error.
+    }
+    throw error;
   }
   try {
     fs.chmodSync(file, 0o600);

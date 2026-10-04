@@ -13,25 +13,27 @@ function waitMs(ms: number) {
 export function writeSessionFile(file: string, session: {url: string; token: string}) {
   fs.mkdirSync(path.dirname(file), {recursive: true});
   const tmp = `${file}.${process.pid}.${randomBytes(8).toString('hex')}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(session), {mode: 0o600});
-  const maxRetries = 5;
-  for (let attempt = 0; ; attempt++) {
-    try {
-      fs.renameSync(tmp, file);
-      break;
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (attempt >= maxRetries || !code || !retryable.has(code)) {
-        try {
-          fs.unlinkSync(tmp);
-        } catch {
-          // The original rename error is the one the caller needs.
-        }
-        throw err;
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(session), {mode: 0o600});
+    const maxRetries = 5;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        fs.renameSync(tmp, file);
+        break;
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (attempt >= maxRetries || !code || !retryable.has(code)) throw err;
+        // Retry n waits 20×n ms before the nth attempt to replace a locked session file.
+        waitMs(20 * (attempt + 1));
       }
-      // Retry n waits 20×n ms before the nth attempt to replace a locked session file.
-      waitMs(20 * (attempt + 1));
     }
+  } catch (err) {
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      // A partial temporary write also needs cleanup; preserve the original write or rename error.
+    }
+    throw err;
   }
   try {
     fs.chmodSync(file, 0o600);

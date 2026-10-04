@@ -1,5 +1,6 @@
 import http from 'node:http';
 import {randomBytes, timingSafeEqual} from 'node:crypto';
+import {TextDecoder} from 'node:util';
 import {EventStore} from './store';
 import {removeSessionFileIfOwned, writeSessionFile} from './session';
 export async function startServer(store: EventStore, sessionFile: string, port = 0) {
@@ -65,7 +66,8 @@ export async function startServer(store: EventStore, sessionFile: string, port =
       }
       let value: unknown;
       try {
-        value = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        const text = new TextDecoder('utf-8', {fatal: true, ignoreBOM: true}).decode(Buffer.concat(chunks));
+        value = JSON.parse(text);
       } catch {
         respond(400, {error: 'Invalid JSON'});
         return;

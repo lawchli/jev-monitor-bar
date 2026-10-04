@@ -970,3 +970,13 @@
 - 内容：以非阻塞方式打开 Python 会话文件，同一描述符检查普通文件后再按既有 16 KiB 预算读取。FIFO、目录与其它特殊文件视为离线，统计/包装失败时关闭描述符；路径替换不会让检查和读取落在不同文件上。
 - 验证：Linux（Node 22.23.2 / Python 3.13.5）：会话专用 10/10、Python 完整 unittest 33/33；`pnpm typecheck`、完整 `pnpm test` 330/330（含其它待独立提交切片）、`git diff --check` 通过。新增真实 FIFO 有独立进程超时保护，后台线程在 FIFO 换回有效会话后补发已排队事件；还覆盖描述符失败清理与路径替换。开工 fetch 后本地与远端 tip 一致，最近仓库 CI `37174547785` 成功。
 - 遗留：Windows / macOS 未在本机执行；本分支 Actions 查询为空，现有配置不对功能分支 push 自动运行；按所有者要求不发布 PR、评论或其它帖子。
+
+## 45 — HTTP JSON 拒绝损坏的 UTF-8
+
+- 日期：2026-10-05
+- harness：codex
+- model：gpt-sol
+- 提交：本条所在提交
+- 内容：接收器先严格解码完整有界 body，再解析 JSON。非法续字节、截断、过长编码、代理区码点与超 Unicode 范围统一返回 400，不再以替换字符确认并存下已改变的事件；保留既有 JSON BOM 拒绝口径。
+- 验证：Linux：专用 3/3 覆盖 6 类非法编码、中文/emoji 跨块与合法 U+FFFD；拒绝后 cursor/事件数量保持 0，随后正常请求成功。隔离旧实现探针复现非法编码得到 200；`pnpm typecheck`、完整 `pnpm test` 334/334（含其它待独立提交切片）、改动文件 Prettier、`git diff --check` 通过。
+- 遗留：Windows / macOS 未在本机执行；记录 44 已推送，分支 Actions 查询仍为空，未发布帖子或触发 CI。

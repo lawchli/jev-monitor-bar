@@ -20,6 +20,8 @@ import {EventStore} from '../src/store';
 require.extensions['.css'] = () => {};
 const {ExpandedView} =
   require('../src/renderer/expanded/ExpandedView') as typeof import('../src/renderer/expanded/ExpandedView');
+const {CompactView} =
+  require('../src/renderer/compact/CompactView') as typeof import('../src/renderer/compact/CompactView');
 
 type ActGlobal = typeof globalThis & {IS_REACT_ACT_ENVIRONMENT?: boolean};
 
@@ -104,6 +106,28 @@ interface Page {
   text(selector?: string): string;
   all(selector: string): string[];
 }
+
+test('empty live views gently describe real records without inventing a run', async () => {
+  const store = new EventStore(tempDir());
+  const bridge = liveBridge(store);
+  const snapshot = store.snapshot();
+  const props = expanded(snapshot, bridge).props as import('../src/renderer/types').ViewProps;
+  await withDom(async page => {
+    for (const View of [CompactView, ExpandedView]) {
+      await page.render(createElement(View, {...props, snapshot: undefined}));
+      assert.match(page.text(), /正在读取本地记录/);
+      assert.doesNotMatch(page.text(), /还没有运行记录/);
+      await page.render(createElement(View, props));
+      assert.match(page.text(), /还没有运行记录/);
+      assert.match(page.text(), /任务发来事件后，会显示在这里/);
+      assert.equal(page.dom.window.document.querySelectorAll('.decision-card, .prob-track, [data-cursor]').length, 0);
+      assert.doesNotMatch(page.text(), /\d+%|模拟数据/);
+      assert.equal(page.dom.window.document.querySelector('select'), null);
+    }
+  });
+  assert.deepEqual(store.snapshot(), snapshot);
+  store.close();
+});
 
 async function withDom(run: (page: Page) => Promise<void>) {
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');

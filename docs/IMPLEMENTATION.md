@@ -835,3 +835,13 @@
   - 关闭后 110 ms 退出，`session.json` 被删除，没有残留进程。
 - 未验证：启动时不抢焦点、整屏截图里监视窗口叠在记事本上——检查开始时远程桌面会话是 Active，运行中断开（Disc），`GetForegroundWindow` 为 0、`CopyFromScreen` 失败。Defender 扫描（实时保护关闭）、干净机器解压即用。取证文件（`docs/reports/2026-09-30-windows/`）还在 PC 的工作区里未提交，等用户在那边的会话里批准提交。
 - 遗留：同上「未验证」；审计后续项见 `docs/AUDIT.md`。
+
+## 32 — Humane polish：柔和的首次空状态
+
+- 日期：2026-10-04
+- harness：codex
+- model：gpt-sol
+- 提交：本条所在提交；分支 `feat/codex-20261004-w3-humane`，基于 `origin/feat/humane-extras@9305f88`
+- 内容：紧凑条与展开视图共用「还没有运行记录 / 任务发来事件后，会显示在这里」文案；首次读取未完成时单独显示正在读取本地记录，接收端状态未知时不声称未监听。空状态不创建运行、不放模拟数据、不补概率，未知字段保持未知。
+- 验证：Linux（Node 22.23.2）：`pnpm typecheck`、`pnpm test`（224/224）、改动文件的 Prettier 检查通过。DOM 验收检查两个视图的首次读取与已确认空状态，没有运行选择器、决策卡、概率条或模拟标记，存储快照不变。沙箱禁止本地 socket 的首次测试未执行成功，获准后完整重跑通过。
+- 遗留：Windows / macOS 原生窗口未在本机验证；本分支 CI 以 PR 的 Actions 为准。

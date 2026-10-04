@@ -1,6 +1,7 @@
 import {useState} from 'react';
 import type {ViewProps} from '../types';
 import {statusText, truncate} from '../view-model/common';
+import {emptyRunCopy} from '../view-model/empty';
 import {DecisionsTab} from './DecisionsTab';
 import {ExecutionTab} from './ExecutionTab';
 import {TimelineTab} from './TimelineTab';
@@ -31,6 +32,7 @@ export function ExpandedView({
   const run = snapshot?.run;
   const summary = run ? runSummary(run, now) : undefined;
   const events = (snapshot?.events ?? []).filter(event => !run || event.run_id === run.id);
+  const empty = emptyRunCopy(snapshot);
 
   return (
     <section className="expanded-root" data-testid="expanded-root">
@@ -70,8 +72,11 @@ export function ExpandedView({
             <p className="expanded-empty">正在读取运行…</p>
           ) : (
             <>
-              <p className="expanded-empty">等待宿主连接…</p>
-              <p className="muted">接收端 {status?.listening ? '在监听' : '未监听'}</p>
+              <p className="expanded-empty">{empty.title}</p>
+              <p className="muted">{empty.hint}</p>
+              <p className="muted">
+                {status ? (status.listening ? '接收端在监听' : '接收端暂未连接') : '正在查看接收端状态…'}
+              </p>
             </>
           )}
         </div>

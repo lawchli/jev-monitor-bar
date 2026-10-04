@@ -13,6 +13,7 @@ import {
   type ConnectionKind,
   type StatusTone,
 } from '../view-model/common';
+import {emptyRunCopy} from '../view-model/empty';
 
 const sourceLabels: Record<string, string> = {model: '模型', rule: '规则', application: '应用'};
 
@@ -172,14 +173,15 @@ function loadingModel(
   };
 }
 
-function emptyModel(status: ReceiverStatus | undefined): CompactModel {
+function emptyModel(status: ReceiverStatus | undefined, snapshot?: Snapshot): CompactModel {
   const receiver = receiverText(status);
+  const copy = emptyRunCopy(snapshot);
   return {
     hasRun: false,
-    waiting: '等待宿主连接…',
+    waiting: copy.hint,
     receiver,
-    name: '等待宿主连接…',
-    nameFull: '等待宿主连接…',
+    name: copy.title,
+    nameFull: copy.title,
     simulated: false,
     runStatus: '等待',
     runTone: 'neutral',
@@ -214,7 +216,7 @@ export function compactModel(
   const full = loaded && (selectedRunId === undefined || loaded.id === selectedRunId) ? loaded : undefined;
   const summary = selectedRunId ? snapshot?.runs.find(item => item.id === selectedRunId) : undefined;
   const run = full ?? summary ?? (selectedRunId === undefined ? pickDefaultRun(snapshot?.runs ?? []) : undefined);
-  if (!run) return selectedRunId ? loadingModel(status, snapshot, selectedRunId) : emptyModel(status);
+  if (!run) return selectedRunId ? loadingModel(status, snapshot, selectedRunId) : emptyModel(status, snapshot);
 
   const connection = connectionState(run, now);
   const decision = full ? latestDecision(full) : undefined;

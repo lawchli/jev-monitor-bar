@@ -1,5 +1,6 @@
 import json
 import os
+import stat
 import sys
 import tempfile
 import time
@@ -33,7 +34,9 @@ class SessionReadTest(unittest.TestCase):
         self.write(contents)
         self.assertIsNone(_read_session(self.path))
         reader = mock.mock_open(read_data=contents)
-        with mock.patch('jev_monitor.sender.open', reader):
+        with mock.patch('jev_monitor.sender.os.open', return_value=99), \
+             mock.patch('jev_monitor.sender.os.fstat', return_value=mock.Mock(st_mode=stat.S_IFREG)), \
+             mock.patch('jev_monitor.sender.os.fdopen', reader):
             self.assertIsNone(_read_session(self.path))
         reader().read.assert_called_once_with(16 * 1024 + 1)
 

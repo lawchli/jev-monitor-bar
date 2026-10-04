@@ -8,6 +8,7 @@ import os
 import queue
 import re
 import secrets
+import stat
 import threading
 import time
 import urllib.error
@@ -153,14 +154,27 @@ def _loopback_origin(url: str) -> Optional[str]:
 
 
 def _read_session(path: str) -> Optional[dict]:
+    fd = None
     try:
-        with open(path, 'rb') as handle:
+        # A FIFO must not block the sender before its byte-limited read starts.
+        # Validate and read the same descriptor so a path replacement is safe.
+        fd = os.open(path, os.O_RDONLY | getattr(os, 'O_NONBLOCK', 0))
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        with os.fdopen(fd, 'rb') as handle:
+            fd = None  # The file object owns the descriptor from here.
             raw = handle.read(_MAX_SESSION_BYTES + 1)
         if len(raw) > _MAX_SESSION_BYTES:
             return None
         data = json.loads(raw.decode('utf-8'))
     except (OSError, ValueError, UnicodeError, RecursionError):
         return None
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
     if not isinstance(data, dict):
         return None
     url = data.get('url')

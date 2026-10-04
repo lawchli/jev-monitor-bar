@@ -910,3 +910,13 @@
 - 内容：聚合器只对 `action.*` 与 `verification.completed` 更新执行尝试。协议允许其他事件带上下文 action/attempt ID，心跳、进度、运行/决策事件不再误建尝试、覆盖执行状态、增加重试或关联冲突。
 - 验证：Linux：专用 3 项测试覆盖 20 种上下文组合、505 条关联心跳、真实动作/验证，实时 store、参考回放、检查点回放和倒退后结果一致。还原旧条件后前两项失败。`pnpm typecheck`、Prettier、本轮完整 `pnpm test` 246/246 通过。记录 37 push 成功，本分支仍无 Actions run。
 - 遗留：不更改协议的上下文 ID 接受范围；Windows / macOS 未在本机执行。
+
+## 39 — 决策卡片的独立身份与展开状态
+
+- 日期：2026-10-04
+- harness：codex
+- model：gpt-sol
+- 提交：本条所在提交
+- 内容：决策与规则卡使用包含 run、类别和 ID 元组的序列化 key，保留显示 ID；展开状态改用 Map。合法 ID 中的冒号不再使两个规则元组或模型/规则卡碰撞，`constructor` / `__proto__` 不再继承展开状态，跨 run 复用 ID 不串状态。
+- 验证：Linux：新增 DOM 回归 3/3，已有 expanded-model 12/12；检查独立展开/收起、重排、运行切换与零 React key 警告。`pnpm typecheck`、Prettier、本轮首次完整 `pnpm test` 246/246 通过。
+- 遗留：Windows / macOS 原生窗口未在本机运行；显示文本和决策语义未改。

@@ -69,6 +69,7 @@ export interface NoulView {
 }
 
 export interface DecisionCardModel {
+  key: string;
   id: string;
   kind: 'decision' | 'rule';
   badge: string;
@@ -422,6 +423,7 @@ function decisionCard(run: RunState, decision: Decision): DecisionCardModel {
   const evaluating = decision.status === 'evaluating';
   const question = textOrMissing(payload.question ?? decision.started?.payload.question);
   return {
+    key: JSON.stringify(['decision', run.id, decision.id]),
     id: decision.id,
     kind: 'decision',
     badge: primitiveBadge(kind),
@@ -450,7 +452,7 @@ function directRule(attempt: Attempt): boolean {
   return selected.payload.source === 'rule';
 }
 
-function ruleCard(attempt: Attempt): DecisionCardModel {
+function ruleCard(run: RunState, attempt: Attempt): DecisionCardModel {
   const payload = attempt.selected?.payload ?? {};
   const rule = payload.rule || NOT_PROVIDED;
   const ruleSource = payload.rule_source || NOT_PROVIDED;
@@ -461,6 +463,7 @@ function ruleCard(attempt: Attempt): DecisionCardModel {
   const verification = verificationLink(attempt);
   if (verification) parts.push(verification);
   return {
+    key: JSON.stringify(['rule', run.id, attempt.action_id, attempt.id]),
     id: `rule:${attempt.action_id}:${attempt.id}`,
     kind: 'rule',
     badge: '规则决策',
@@ -491,7 +494,7 @@ export function decisionCards(run: RunState): DecisionCardModel[] {
   }
   for (const attempt of Object.values(run.attempts)) {
     if (!directRule(attempt)) continue;
-    cards.push({event: attempt.selected, card: ruleCard(attempt)});
+    cards.push({event: attempt.selected, card: ruleCard(run, attempt)});
   }
   cards.sort((left, right) => compareNewest(left.event, right.event));
   return cards.slice(0, 50).map(item => item.card);

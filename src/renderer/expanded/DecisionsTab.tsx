@@ -3,15 +3,15 @@ import {truncate} from '../view-model/common';
 import type {DecisionCardModel} from './model';
 
 export function DecisionsTab({cards}: {cards: DecisionCardModel[]}) {
-  const [open, setOpen] = useState<Record<string, boolean>>({});
-  const firstId = cards[0]?.id;
+  const [open, setOpen] = useState(() => new Map<string, boolean>());
+  const firstKey = cards[0]?.key;
   if (cards.length === 0) return <p className="expanded-empty">尚无决策</p>;
   return (
     <div className="decision-list">
       {cards.map(card => {
-        const expanded = open[card.id] ?? card.id === firstId;
+        const expanded = open.get(card.key) ?? card.key === firstKey;
         return (
-          <article key={card.id} className="decision-card" data-testid="decision-card">
+          <article key={card.key} className="decision-card" data-testid="decision-card">
             <header className="decision-head">
               <span className="badge">{card.badge}</span>
               <h3 title={card.question}>{truncate(card.title, 42)}</h3>
@@ -19,7 +19,7 @@ export function DecisionsTab({cards}: {cards: DecisionCardModel[]}) {
               <button
                 type="button"
                 aria-expanded={expanded}
-                onClick={() => setOpen(current => ({...current, [card.id]: !expanded}))}
+                onClick={() => setOpen(current => new Map(current).set(card.key, !expanded))}
               >
                 {expanded ? '收起' : '展开'}
               </button>

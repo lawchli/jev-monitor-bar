@@ -6,14 +6,19 @@ export function recordCleanupFailure(current: string | undefined, error: unknown
 
 export function armQuit(
   event: {preventDefault(): void},
-  closing: {current: boolean},
+  closing: {current: boolean; pending?: boolean},
   closeServer: (() => Promise<void>) | undefined,
   quit: () => void,
   onCleanupError?: (error: unknown) => void,
 ) {
-  if (closing.current || !closeServer) return;
+  if (closing.current) {
+    if (closing.pending) event.preventDefault();
+    return;
+  }
+  if (!closeServer) return;
   event.preventDefault();
   closing.current = true;
+  closing.pending = true;
   let cleanup: Promise<void>;
   try {
     cleanup = closeServer();
@@ -32,5 +37,9 @@ export function armQuit(
         );
       }
     })
-    .finally(quit);
+    .finally(() => {
+      // The intentional quit emits before-quit again; allow it only after cleanup settles.
+      closing.pending = false;
+      quit();
+    });
 }

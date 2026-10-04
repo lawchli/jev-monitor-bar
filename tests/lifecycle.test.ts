@@ -90,16 +90,102 @@ test('cleanup starts immediately and reentrant quit events cannot start it twice
   };
   armQuit(event, closing, close, quit);
   assert.equal(closes, 1);
-  assert.equal(prevented, 1);
+  assert.equal(prevented, 2);
   assert.equal(quits, 0);
   armQuit(event, closing, close, quit);
   assert.equal(closes, 1);
+  assert.equal(prevented, 3);
   release();
   await nextTurn();
   assert.equal(quits, 1);
   armQuit(event, closing, close, quit);
   assert.equal(closes, 1);
   assert.equal(quits, 1);
+});
+
+for (const rejects of [false, true]) {
+  test(`every quit event waits for ${rejects ? 'rejected' : 'successful'} pending cleanup`, async () => {
+    const closing = {current: false};
+    const prevented: boolean[] = [];
+    const errors: unknown[] = [];
+    const failure = new Error('cleanup failed');
+    let closes = 0;
+    let quits = 0;
+    let release = () => {};
+    const close = () => {
+      closes++;
+      return new Promise<void>((resolve, reject) => {
+        release = () => (rejects ? reject(failure) : resolve());
+      });
+    };
+    const beforeQuit = () => {
+      let blocked = false;
+      armQuit(
+        {preventDefault: () => (blocked = true)},
+        closing,
+        close,
+        () => {
+          quits++;
+          beforeQuit();
+        },
+        error => errors.push(error),
+      );
+      prevented.push(blocked);
+    };
+    beforeQuit();
+    beforeQuit();
+    beforeQuit();
+    assert.deepEqual(prevented, [true, true, true]);
+    assert.equal(closes, 1);
+    assert.equal(quits, 0);
+    release();
+    await nextTurn();
+    assert.equal(closes, 1);
+    assert.equal(quits, 1);
+    assert.deepEqual(prevented, [true, true, true, false]);
+    assert.deepEqual(errors, rejects ? [failure] : []);
+    beforeQuit();
+    assert.deepEqual(prevented, [true, true, true, false, false]);
+    assert.equal(closes, 1);
+  });
+}
+
+test('quit events stay blocked through a failing cleanup reporter and allow the final quit', async t => {
+  const closing = {current: false};
+  const warnings: string[] = [];
+  const events: boolean[] = [];
+  t.mock.method(console, 'warn', (message: string) => warnings.push(message));
+  let closes = 0;
+  let quits = 0;
+  const close = () => {
+    closes++;
+    throw new Error('close failed');
+  };
+  const trigger = () => {
+    let blocked = false;
+    armQuit(
+      {preventDefault: () => (blocked = true)},
+      closing,
+      close,
+      () => {
+        quits++;
+        trigger();
+      },
+      () => {
+        trigger();
+        throw new Error('reporter failed');
+      },
+    );
+    events.push(blocked);
+  };
+  trigger();
+  trigger();
+  assert.deepEqual(events, [true, true]);
+  await nextTurn();
+  assert.deepEqual(events, [true, true, true, false]);
+  assert.equal(closes, 1);
+  assert.equal(quits, 1);
+  assert.deepEqual(warnings, ['jev-monitor: session cleanup reporter failed: reporter failed']);
 });
 
 test('a synchronous cleanup failure without a reporter still quits', async () => {

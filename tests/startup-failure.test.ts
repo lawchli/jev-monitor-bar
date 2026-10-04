@@ -119,7 +119,7 @@ test('armQuit waits for server close and does not block a quit with no server', 
       quit += 1;
     },
   );
-  assert.equal(prevented, 1);
+  assert.equal(prevented, 2);
   release();
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(quit, 1);

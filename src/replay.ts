@@ -34,7 +34,27 @@ function sequenceKey(event: Pick<StoredEvent, 'run_id' | 'producer_id' | 'sequen
   return JSON.stringify([event.run_id, event.producer_id, event.sequence]);
 }
 
+/** Detach public replay data while preserving shared references and null-prototype state tables. */
+function copyReplayData<T>(value: T, copies = new WeakMap<object, object>()): T {
+  if (value === null || typeof value !== 'object') return value;
+  const previous = copies.get(value);
+  if (previous) return previous as T;
+  const copy = Array.isArray(value)
+    ? []
+    : Object.create(Object.getPrototypeOf(value) === null ? null : Object.prototype);
+  copies.set(value, copy);
+  for (const key of Object.keys(value)) {
+    const entry = copyReplayData((value as Record<string, unknown>)[key], copies);
+    if (key === '__proto__')
+      Object.defineProperty(copy, key, {value: entry, enumerable: true, writable: true, configurable: true});
+    else copy[key] = entry;
+  }
+  return copy as T;
+}
+
 export function parseReplay(text: string, parsers: ReplayParsers, limit = REPLAY_EVENT_LIMIT): ReplayParseResult {
+  const requested = Number.isFinite(limit) ? Math.trunc(limit) : REPLAY_EVENT_LIMIT;
+  const retainedLimit = Math.min(REPLAY_EVENT_LIMIT, Math.max(1, requested));
   const source = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
   const events: StoredEvent[] = [];
   let invalidLines = 0;
@@ -52,7 +72,7 @@ export function parseReplay(text: string, parsers: ReplayParsers, limit = REPLAY
       parsers.validateEvent(event);
       if (cursor !== undefined && !Number.isSafeInteger(cursor)) throw new Error('Invalid cursor');
       if (received_at !== undefined && typeof received_at !== 'string') throw new Error('Invalid received_at');
-      if (events.length >= limit) {
+      if (events.length >= retainedLimit) {
         omitted++;
         continue;
       }
@@ -100,13 +120,13 @@ export function replaySnapshot(events: readonly StoredEvent[], count: number, ru
   }
   let selected = focus !== undefined ? runs.get(focus) : undefined;
   if (!selected) selected = pickDefaultRun([...runs.values()]);
-  return {
+  return copyReplayData({
     cursor,
     runs: [...runs.values()].map(({decisions, attempts, ...summary}) => summary),
     run: selected,
     events: selected ? applied.filter(event => event.run_id === selected.id) : [],
     corruptLines: 0,
-  };
+  });
 }
 
 export const REPLAY_CHECKPOINT_INTERVAL = 1000;
@@ -154,7 +174,7 @@ function shareEntries<T extends object>(entries: Entries<T>, previous: Entries<T
  * 每 interval 条留一个聚合状态检查点。跳到第 p 条时，从 p 之前最近的检查点起最多再应用 interval - 1 条；
  * 从当前位置往后走只应用新增的几条。检查点里的 RunState 之后不再改动：检查点之后第一次改某个 run 时才复制它
  * （run 本身、decisions 和 attempts 里的条目各复制一层），存检查点时把没变的条目换回上一个检查点的对象。
- * 事件和 payload 始终共用同一份：applyEvent 只替换对它们的引用，不改内容。
+ * 内部事件和 payload 共用同一份：applyEvent 只替换对它们的引用，不改内容；交给调用方的快照另作深拷贝。
  *
  * 内存上限：检查点最多 REPLAY_MAX_CHECKPOINTS + 1 个。每条事件最多新增一个决策和一个尝试，第 j 个检查点的表格
  * 最多 2·j·interval 个键，所以全部检查点合计不超过 n·(n / interval + 1) 个键，n = 20000 时约 42 万个。
@@ -216,14 +236,13 @@ export class ReplayTimeline {
     const runs = [...this.runs.values()];
     let selected = focus !== undefined ? this.runs.get(focus) : undefined;
     if (!selected) selected = pickDefaultRun(runs);
-    return {
+    return copyReplayData({
       cursor: this.cursors[end],
       runs: runs.map(({decisions, attempts, ...summary}) => summary),
-      // 交出去的是副本：内部状态之后还会改，检查点也不能被外面改到。
-      run: selected ? copyRun(selected) : undefined,
+      run: selected,
       events: selected ? this.eventsOf(selected.id, end) : [],
       corruptLines: 0,
-    };
+    });
   }
 
   private eventsOf(runId: string, end: number): StoredEvent[] {
@@ -304,5 +323,5 @@ export function pageReplay(events: readonly StoredEvent[], count: number, query:
     return true;
   });
   rows.sort((left, right) => left.cursor - right.cursor);
-  return rows.slice(-limit);
+  return copyReplayData(rows.slice(-limit));
 }

@@ -1,8 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {randomBytes} from 'node:crypto';
+import {readBoundedTextFile} from './read-file';
 
 const retryable = new Set(['EPERM', 'EBUSY', 'EACCES']);
+export const SESSION_MAX_BYTES = 16 * 1024;
 
 function waitMs(ms: number) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -40,7 +42,7 @@ export function writeSessionFile(file: string, session: {url: string; token: str
 
 export function readSessionFile(file: string): {url: string; token: string} | undefined {
   try {
-    const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as unknown;
+    const parsed = JSON.parse(readBoundedTextFile(file, SESSION_MAX_BYTES)) as unknown;
     if (!parsed || typeof parsed !== 'object') return undefined;
     const {url, token} = parsed as {url?: unknown; token?: unknown};
     if (typeof url !== 'string' || typeof token !== 'string') return undefined;
@@ -52,7 +54,7 @@ export function readSessionFile(file: string): {url: string; token: string} | un
 
 function lookAtSession(file: string): {token?: string; code?: string} {
   try {
-    const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as unknown;
+    const parsed = JSON.parse(readBoundedTextFile(file, SESSION_MAX_BYTES)) as unknown;
     if (!parsed || typeof parsed !== 'object') return {};
     const token = (parsed as {token?: unknown}).token;
     return typeof token === 'string' ? {token} : {};

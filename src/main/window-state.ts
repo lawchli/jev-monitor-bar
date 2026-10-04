@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type {WindowMode} from '../ipc';
+import {readBoundedTextFile} from '../read-file';
 
 export interface Rect {
   x: number;
@@ -29,6 +30,7 @@ const TOP_STRIP_PX = 32;
 const MIN_HORIZONTAL_OVERLAP_PX = 64;
 const RENAME_RETRIES = 5;
 const RETRYABLE = new Set(['EPERM', 'EBUSY', 'EACCES']);
+export const WINDOW_STATE_MAX_BYTES = 16 * 1024;
 
 export function defaultWindowState(
   bounds: {compact: Rect; expanded: Rect} = {
@@ -84,7 +86,7 @@ function parseWindowState(value: unknown): SavedWindowState | undefined {
 export function loadWindowState(file: string): SavedWindowState | undefined {
   let text: string;
   try {
-    text = fs.readFileSync(file, 'utf8');
+    text = readBoundedTextFile(file, WINDOW_STATE_MAX_BYTES);
   } catch {
     return undefined;
   }

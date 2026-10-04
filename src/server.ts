@@ -53,14 +53,15 @@ export async function startServer(store: EventStore, sessionFile: string, port =
     let size = 0;
     const chunks: Buffer[] = [];
     try {
-      // Breaking out of the body iterator destroys the socket before the 413 is flushed, so drain instead.
-      for await (const chunk of req) {
+      // Keep the socket alive when leaving the iterator so an early 413 can flush before the connection closes.
+      for await (const chunk of req.iterator({destroyOnReturn: false})) {
         size += chunk.length;
-        if (size <= 65536) chunks.push(chunk);
-      }
-      if (size > 65536) {
-        tooLarge();
-        return;
+        if (size > 65536) {
+          tooLarge();
+          req.resume();
+          return;
+        }
+        chunks.push(chunk);
       }
       let value: unknown;
       try {

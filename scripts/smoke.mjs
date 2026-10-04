@@ -696,7 +696,8 @@ async function run() {
   await step('compact.waitingHost', async () => {
     const root = page.getByTestId('compact-root');
     await poll(async () => (await root.getAttribute('data-empty')) === 'true', '紧凑条空状态');
-    check('compact.waitingHost', (await root.innerText()).includes('等待宿主连接'));
+    await poll(async () => (await root.innerText()).includes('还没有运行记录'), '本地记录读取完成');
+    check('compact.waitingHost', (await root.innerText()).includes('任务发来事件后，会显示在这里'));
   });
   await step('screenshot.compactEmpty', () => screenshot(page, 'compact-empty'));
 

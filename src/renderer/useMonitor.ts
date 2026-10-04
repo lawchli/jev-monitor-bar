@@ -1,11 +1,13 @@
-import {useEffect, useState} from 'react';
-import type {ReceiverStatus, Snapshot} from '../ipc';
+import {useCallback, useEffect, useRef, useState} from 'react';
+import type {MonitorBridge, ReceiverStatus, Snapshot} from '../ipc';
 
 export interface MonitorState {
   snapshot?: Snapshot;
   status?: ReceiverStatus;
   statusError?: string;
   snapshotError?: string;
+  retrying: boolean;
+  retry(): void;
   now: number;
 }
 
@@ -23,23 +25,53 @@ export function projectSnapshot(
   return {...snapshot, run: undefined, events: []};
 }
 
-export function useMonitor(runId?: string): MonitorState {
+export function useMonitor(runId?: string, bridge: MonitorBridge = window.monitor): MonitorState {
   const [snapshot, setSnapshot] = useState<Snapshot>();
   const [fetchedFor, setFetchedFor] = useState<string | undefined>();
   const [status, setStatus] = useState<ReceiverStatus>();
   const [statusError, setStatusError] = useState<string>();
   const [snapshotError, setSnapshotError] = useState<string>();
   const [now, setNow] = useState(() => Date.now());
+  const [retrying, setRetrying] = useState(false);
+  const retryPending = useRef(false);
+  const retryEpoch = useRef(0);
+  const mounted = useRef(false);
+  const readStatus = useRef<() => Promise<void>>(() => Promise.resolve());
+  const readSnapshot = useRef<() => Promise<void>>(() => Promise.resolve());
+
+  const retry = useCallback(() => {
+    if (retryPending.current) return;
+    retryPending.current = true;
+    const epoch = ++retryEpoch.current;
+    setRetrying(true);
+    void Promise.all([readStatus.current(), readSnapshot.current()]).finally(() => {
+      if (retryEpoch.current !== epoch) return;
+      retryPending.current = false;
+      if (mounted.current) setRetrying(false);
+    });
+  }, []);
 
   useEffect(() => {
+    retryEpoch.current += 1;
+    retryPending.current = false;
+    setRetrying(false);
+  }, [runId, bridge]);
+
+  useEffect(() => {
+    mounted.current = true;
     const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
+    return () => {
+      mounted.current = false;
+      clearInterval(timer);
+    };
   }, []);
 
   useEffect(() => {
     let stopped = false;
+    let inFlight: Promise<void> | undefined;
     const load = () => {
-      window.monitor
+      if (inFlight) return inFlight;
+      inFlight = bridge
         .status()
         .then(next => {
           if (stopped) return;
@@ -48,31 +80,37 @@ export function useMonitor(runId?: string): MonitorState {
         })
         .catch(reason => {
           if (!stopped) setStatusError(message(reason));
+        })
+        .finally(() => {
+          inFlight = undefined;
         });
+      return inFlight;
     };
-    load();
+    readStatus.current = load;
+    void load();
     const timer = setInterval(load, 5000);
     return () => {
       stopped = true;
       clearInterval(timer);
+      if (readStatus.current === load) readStatus.current = () => Promise.resolve();
     };
-  }, []);
+  }, [bridge]);
 
   useEffect(() => {
     let stopped = false;
-    let inFlight = false;
+    let inFlight: Promise<void> | undefined;
     let pending = false;
     let lastStart = 0;
     let delayTimer: ReturnType<typeof setTimeout> | undefined;
 
-    const start = () => {
-      if (stopped) return;
+    const start = (immediate = false): Promise<void> => {
+      if (stopped) return Promise.resolve();
       if (inFlight) {
-        pending = true;
-        return;
+        if (!immediate) pending = true;
+        return inFlight;
       }
       const elapsed = Date.now() - lastStart;
-      if (lastStart !== 0 && elapsed < 100) {
+      if (!immediate && lastStart !== 0 && elapsed < 100) {
         pending = true;
         if (!delayTimer) {
           delayTimer = setTimeout(() => {
@@ -82,13 +120,12 @@ export function useMonitor(runId?: string): MonitorState {
             start();
           }, 100 - elapsed);
         }
-        return;
+        return Promise.resolve();
       }
-      inFlight = true;
       pending = false;
       lastStart = Date.now();
       const requested = runId;
-      window.monitor
+      inFlight = bridge
         .snapshot(requested)
         .then(next => {
           if (stopped) return;
@@ -100,21 +137,35 @@ export function useMonitor(runId?: string): MonitorState {
           if (!stopped) setSnapshotError(message(reason));
         })
         .finally(() => {
-          inFlight = false;
+          inFlight = undefined;
           if (stopped || !pending) return;
           pending = false;
           start();
         });
+      return inFlight;
     };
 
-    start();
-    const unsubscribe = window.monitor.onChanged(() => start());
+    const refresh = () => start(true);
+    readSnapshot.current = refresh;
+    void start();
+    const unsubscribe = bridge.onChanged(() => {
+      void start();
+    });
     return () => {
       stopped = true;
       if (delayTimer) clearTimeout(delayTimer);
       unsubscribe();
+      if (readSnapshot.current === refresh) readSnapshot.current = () => Promise.resolve();
     };
-  }, [runId]);
+  }, [runId, bridge]);
 
-  return {snapshot: projectSnapshot(snapshot, fetchedFor, runId), status, statusError, snapshotError, now};
+  return {
+    snapshot: projectSnapshot(snapshot, fetchedFor, runId),
+    status,
+    statusError,
+    snapshotError,
+    retrying,
+    retry,
+    now,
+  };
 }

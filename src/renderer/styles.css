@@ -41,6 +41,44 @@ body {
   font-size: var(--font-size-md);
 }
 
+#app-root {
+  display: flex;
+  flex-direction: column;
+}
+
+.receiver-notice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex: none;
+  padding: 3px var(--space-sm);
+  color: var(--tone-neutral);
+  font-size: var(--font-size-sm);
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 20%, transparent);
+}
+
+.receiver-notice span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.receiver-notice button {
+  flex: none;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--tone-neutral);
+  border-radius: 4px;
+  padding: 1px var(--space-xs);
+  font: inherit;
+}
+
+#app-root > .line {
+  flex: none;
+}
+
 .compact,
 .expanded {
   padding: var(--space-md);

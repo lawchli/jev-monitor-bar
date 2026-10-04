@@ -14,7 +14,13 @@ export function armQuit(
   if (closing.current || !closeServer) return;
   event.preventDefault();
   closing.current = true;
-  void closeServer()
+  let cleanup: Promise<void>;
+  try {
+    cleanup = closeServer();
+  } catch (error) {
+    cleanup = Promise.reject(error);
+  }
+  void cleanup
     .catch(error => {
       try {
         onCleanupError?.(error);

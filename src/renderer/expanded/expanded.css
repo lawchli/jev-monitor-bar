@@ -23,6 +23,7 @@
 }
 
 .expanded-header,
+.execution-tools,
 .timeline-tools,
 .decision-head,
 .tabs {
@@ -33,6 +34,7 @@
 
 .expanded-header select,
 .expanded-header button,
+.execution-tools button,
 .tabs button,
 .timeline-tools button,
 .decision-head button,
@@ -210,6 +212,17 @@
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+.execution-tools {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  flex-wrap: wrap;
+  margin-bottom: var(--space-xs);
+  padding: var(--space-xs) 0;
+  font-size: var(--font-size-sm);
+  background: var(--card);
 }
 
 .attempt-group li + li {

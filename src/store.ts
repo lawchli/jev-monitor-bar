@@ -187,10 +187,15 @@ export class EventStore extends EventEmitter {
     if (this.ids.has(raw.event_id)) return {accepted: false, cursor: this.cursor};
     // A new event_id on a used producer sequence usually means a restarted sender reused its producer_id.
     if (this.sequences.has(this.seq(raw))) return {accepted: false, conflict: true, cursor: this.cursor};
+    const cursor = this.cursor + 1;
+    if (!Number.isSafeInteger(cursor)) {
+      // Recovery requires an exact cursor. Never acknowledge a line that would be discarded after a restart.
+      throw Object.assign(new Error('Event cursor exceeds the safe integer range'), {code: 'EOVERFLOW'});
+    }
     const e: StoredEvent = {
       ...sanitizeEvent(raw, this.diagnostics),
       received_at: new Date().toISOString(),
-      cursor: this.cursor + 1,
+      cursor,
     };
     // Commit on disk before acknowledgement; a failed write never becomes a successful send.
     this.append(Buffer.from(JSON.stringify(e) + '\n'), e.cursor);

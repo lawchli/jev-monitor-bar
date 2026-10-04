@@ -74,6 +74,7 @@ const str = {type: 'string', maxLength: 4096};
 const id = {type: 'string', minLength: 1, maxLength: 160, pattern: '^[a-zA-Z0-9_.:/-]+$'};
 const num = {type: 'number', minimum: 0};
 const probability = {type: 'number', minimum: 0, maximum: 1};
+const counter = {type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER};
 const dictionary = (value: object) => ({
   type: 'object',
   maxProperties: 255,
@@ -91,7 +92,7 @@ export const schema = {
     event_id: id,
     run_id: id,
     producer_id: id,
-    sequence: {type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER},
+    sequence: counter,
     occurred_at: {type: 'string', format: 'date-time'},
     type: {enum: eventTypes},
     decision_id: id,
@@ -137,10 +138,10 @@ export const schema = {
             properties: {name: str, observed: str, result: {enum: ['passed', 'failed', 'unknown']}, evidence: str},
           },
         },
-        completed: {type: 'integer', minimum: 0},
-        total: {type: 'integer', minimum: 0},
-        count: {type: 'integer', minimum: 0},
-        retry: {type: 'integer', minimum: 0},
+        completed: counter,
+        total: counter,
+        count: counter,
+        retry: counter,
         usage: dictionary(num),
         diagnostic: {},
       },

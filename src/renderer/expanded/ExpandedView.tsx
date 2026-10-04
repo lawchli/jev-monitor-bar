@@ -128,7 +128,7 @@ export function ExpandedView({
           </div>
           <div className="expanded-panel" role="tabpanel">
             {tab === 'decisions' ? <DecisionsTab cards={decisionCards(run)} /> : null}
-            {tab === 'execution' ? <ExecutionTab groups={attemptGroups(run)} /> : null}
+            {tab === 'execution' ? <ExecutionTab key={run.id} groups={attemptGroups(run)} /> : null}
             {tab === 'timeline' ? (
               <TimelineTab
                 events={events}

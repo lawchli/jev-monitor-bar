@@ -136,7 +136,7 @@ export function applyEvent(r: RunState, e: StoredEvent) {
     bound(r.decisions, r);
     if (!r.ended_at && current) r.status = d.status;
   }
-  if (e.action_id && e.attempt_id) {
+  if ((e.type.startsWith('action.') || e.type === 'verification.completed') && e.action_id && e.attempt_id) {
     const key = JSON.stringify([e.action_id, e.attempt_id]);
     const a = (r.attempts[key] ??= {
       id: e.attempt_id,

@@ -900,3 +900,13 @@
 - 内容：抽出纯 Node 的 `readReplayFile`，只打开一次文件，通过同一描述符检查普通文件和大小；分块读取最多 50 MiB + 1 字节，避免 stat 后文件增长或路径替换绕过限制。UTF-8 解码兼容跨块字符，所有失败路径关闭描述符；非阻塞打开后拒绝特殊文件。
 - 验证：Linux：专用回归 9/9（增长、路径替换、分块 UTF-8、截断、读/关闭失败、边界），已有 replay 回归通过；`pnpm typecheck`、Prettier 和 `git diff --check` 通过。本轮首次完整 `pnpm test` 246/246 已覆盖该切片。真实 FIFO 无 writer 时 0.79 ms 内拒绝。记录 36 push 已成功，查询本分支 Actions 为 `[]`。
 - 遗留：50 MiB 内仍同步解析；Windows / macOS 文件行为未在本机执行。没有创建 PR、评论或主动触发 CI。
+
+## 38 — 关联 ID 不再凭空生成执行尝试
+
+- 日期：2026-10-04
+- harness：codex
+- model：gpt-sol
+- 提交：本条所在提交
+- 内容：聚合器只对 `action.*` 与 `verification.completed` 更新执行尝试。协议允许其他事件带上下文 action/attempt ID，心跳、进度、运行/决策事件不再误建尝试、覆盖执行状态、增加重试或关联冲突。
+- 验证：Linux：专用 3 项测试覆盖 20 种上下文组合、505 条关联心跳、真实动作/验证，实时 store、参考回放、检查点回放和倒退后结果一致。还原旧条件后前两项失败。`pnpm typecheck`、Prettier、本轮完整 `pnpm test` 246/246 通过。记录 37 push 成功，本分支仍无 Actions run。
+- 遗留：不更改协议的上下文 ID 接受范围；Windows / macOS 未在本机执行。

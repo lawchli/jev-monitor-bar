@@ -890,3 +890,13 @@
 - 内容：Python 会话读取最多 16 KiB + 1 字节，超限、解码/递归失败视为离线；token 限制为 1–1024 个可见 ASCII 字符。无效 header 凭证不再让已入队事件在发送时被丢弃，等待会话修复后继续投递。没有改已有审计分支的 deleted-cwd、fork 或非有限数修复。
 - 验证：Linux，Node 22.23.2 / Python 3.13.5：`pnpm typecheck`、`pnpm test`（工作树 246/246，含本轮其他独立切片）、`pnpm format:check` 通过；Python 完整 unittest 26/26，新增会话测试 5/5。大小/凭证回归在旧代码失败；真实后台线程在坏会话下保留队列，修复后发送成功。接手时已 fetch，基线 `79faebb` 的 CI `37174547785` 成功。
 - 遗留：Windows / macOS 未在本机运行；本分支只推送、不发布 PR 或评论，现有 CI 只对 main push / PR / 手动触发运行，因此本分支推送本身不会启动三平台 CI。
+
+## 37 — 回放文件按已打开的描述符限制读取
+
+- 日期：2026-10-04
+- harness：codex
+- model：gpt-sol
+- 提交：本条所在提交
+- 内容：抽出纯 Node 的 `readReplayFile`，只打开一次文件，通过同一描述符检查普通文件和大小；分块读取最多 50 MiB + 1 字节，避免 stat 后文件增长或路径替换绕过限制。UTF-8 解码兼容跨块字符，所有失败路径关闭描述符；非阻塞打开后拒绝特殊文件。
+- 验证：Linux：专用回归 9/9（增长、路径替换、分块 UTF-8、截断、读/关闭失败、边界），已有 replay 回归通过；`pnpm typecheck`、Prettier 和 `git diff --check` 通过。本轮首次完整 `pnpm test` 246/246 已覆盖该切片。真实 FIFO 无 writer 时 0.79 ms 内拒绝。记录 36 push 已成功，查询本分支 Actions 为 `[]`。
+- 遗留：50 MiB 内仍同步解析；Windows / macOS 文件行为未在本机执行。没有创建 PR、评论或主动触发 CI。

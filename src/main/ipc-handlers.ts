@@ -1,24 +1,13 @@
 import fs from 'node:fs';
 import {BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent} from 'electron';
 import {IPC} from '../ipc';
-import {REPLAY_MAX_BYTES} from '../replay';
-import {createMonitorHandlers, type MonitorHandlerOptions, type ReplayFileIO, type ReplayReadResult} from './ipc-api';
+import {createMonitorHandlers, type MonitorHandlerOptions, type ReplayFileIO} from './ipc-api';
+import {readReplayFile} from './replay-files';
 
 function parentWindow(event: IpcMainInvokeEvent): BrowserWindow | undefined {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (!win || win.isDestroyed()) return undefined;
   return win;
-}
-
-function readBounded(file: string): ReplayReadResult {
-  try {
-    const stat = fs.statSync(file);
-    if (!stat.isFile()) return {ok: false, reason: 'read-error', message: '不是文件'};
-    if (stat.size > REPLAY_MAX_BYTES) return {ok: false, reason: 'too-large'};
-    return {ok: true, text: fs.readFileSync(file, 'utf8')};
-  } catch (error) {
-    return {ok: false, reason: 'read-error', message: error instanceof Error ? error.message : String(error)};
-  }
 }
 
 function replayFiles(event: IpcMainInvokeEvent): ReplayFileIO {
@@ -38,7 +27,7 @@ function replayFiles(event: IpcMainInvokeEvent): ReplayFileIO {
       if (result.canceled || result.filePaths.length === 0) return undefined;
       return result.filePaths[0];
     },
-    readBounded,
+    readBounded: readReplayFile,
     write(file, contents) {
       fs.writeFileSync(file, contents);
     },

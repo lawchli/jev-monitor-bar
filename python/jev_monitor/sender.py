@@ -699,11 +699,12 @@ class MonitorSender:
         )
         try:
             with self._opener.open(request, timeout=self.timeout) as response:
-                response.read()
+                # Only the HTTP status is used. Reading an unbounded or stalled
+                # response body would delay the queue and could exhaust memory.
                 return response.getcode()
         except urllib.error.HTTPError as exc:
             try:
-                exc.read()
+                exc.close()
             except Exception:
                 pass
             return exc.code
